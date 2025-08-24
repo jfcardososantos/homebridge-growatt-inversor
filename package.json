@@ -22,7 +22,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jfcardososantos/homebridge-growatt.git"
+    "url": "git+https://github.com/jfcardososantos/homebridge-growatt.git"
   },
   "bugs": {
     "url": "https://github.com/jfcardososantos/homebridge-growatt/issues"
