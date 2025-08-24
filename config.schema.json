@@ -1,0 +1,82 @@
+{
+  "pluginAlias": "GrowattSolar",
+  "pluginType": "platform",
+  "singular": false,
+  "headerDisplay": "🌞 <h3>Bem-vindo ao Homebridge Growatt Solar!</h3><p>Este plugin conecta seus inversores solares Growatt ao Apple HomeKit, permitindo monitorar a produção de energia diretamente no app Casa.</p><div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 15px; border-radius: 10px; color: white; margin: 10px 0;'><h4>✨ O que este plugin faz:</h4><ul><li>🔍 <strong>Detecta automaticamente</strong> todas as suas plantas solares</li><li>📊 <strong>Monitora em tempo real:</strong> Potência atual, energia do dia e status</li><li>🏠 <strong>Integra com HomeKit:</strong> Visualize os dados no app Casa</li><li>📍 <strong>Nomes inteligentes:</strong> Identifica plantas pelo endereço baseado em GPS</li><li>🔄 <strong>Atualização automática:</strong> Dados sempre atualizados</li></ul></div>",
+  "footerDisplay": "<div style='background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #007bff; margin-top: 20px;'><h4>🔑 Como obter seu Token:</h4><ol><li>Acesse o <a href='https://openapi.growatt.com' target='_blank'>Portal de Desenvolvedor Growatt</a></li><li>Faça login com sua conta do aplicativo Growatt</li><li>Vá em \"API Token\" e gere um novo token</li><li>Copie o token e cole no campo abaixo</li></ol><p><strong>⚡ Dica:</strong> O token geralmente tem 32 caracteres e contém letras e números.</p></div><div style='background: #fff3cd; padding: 10px; border-radius: 5px; margin-top: 10px;'><p><strong>⚠️ Importante:</strong> Mantenha seu token seguro e não o compartilhe com outras pessoas!</p></div>",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "title": "🏷️ Nome da Plataforma",
+        "type": "string",
+        "default": "Growatt Solar",
+        "required": true,
+        "description": "Nome que aparecerá no Homebridge (mantenha como 'Growatt Solar')"
+      },
+      "token": {
+        "title": "🔑 Token da API Growatt",
+        "type": "string",
+        "required": true,
+        "description": "Seu token de acesso obtido no portal do desenvolvedor Growatt",
+        "placeholder": "ex: 4ox07b7r9d1n5k9eh6yqj60628319k8w"
+      },
+      "refreshInterval": {
+        "title": "⏱️ Intervalo de Atualização (minutos)",
+        "type": "integer",
+        "default": 5,
+        "minimum": 1,
+        "maximum": 60,
+        "description": "A cada quantos minutos os dados serão atualizados (recomendado: 5 minutos)"
+      },
+      "useGeocodedNames": {
+        "title": "📍 Usar nomes baseados em localização",
+        "type": "boolean",
+        "default": true,
+        "description": "Se ativado, tentará identificar o endereço da planta usando GPS para criar nomes mais descritivos"
+      },
+      "geocodingProvider": {
+        "title": "🗺️ Provedor de Geocodificação",
+        "type": "string",
+        "default": "nominatim",
+        "enum": ["nominatim", "google"],
+        "condition": {
+          "functionBody": "return model.useGeocodedNames === true;"
+        },
+        "description": "Serviço usado para converter coordenadas em endereços (Nominatim é gratuito)"
+      },
+      "googleApiKey": {
+        "title": "🔑 Chave da API Google (opcional)",
+        "type": "string",
+        "condition": {
+          "functionBody": "return model.useGeocodedNames === true && model.geocodingProvider === 'google';"
+        },
+        "description": "Necessário apenas se escolher Google como provedor de geocodificação"
+      }
+    },
+    "required": ["name", "token"]
+  },
+  "layout": [
+    {
+      "type": "fieldset",
+      "title": "⚙️ Configuração Básica",
+      "expandable": false,
+      "items": [
+        "name",
+        "token",
+        "refreshInterval"
+      ]
+    },
+    {
+      "type": "fieldset",
+      "title": "🌍 Configuração de Localização",
+      "expandable": true,
+      "expanded": false,
+      "items": [
+        "useGeocodedNames",
+        "geocodingProvider",
+        "googleApiKey"
+      ]
+    }
+  ]
+}
