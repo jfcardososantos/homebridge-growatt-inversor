@@ -1,6 +1,6 @@
 {
   "name": "homebridge-growatt-inversor",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Homebridge plugin for Growatt Solar inverters",
   "main": "index.js",
   "scripts": {
