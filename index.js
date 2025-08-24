@@ -12,14 +12,14 @@ module.exports = (homebridge) => {
   Service = hap.Service;
 
   // Registra o plugin como um acessório único
-  homebridge.registerAccessory('homebridge-growatt-inversor', 'GrowattInverter', GrowattInverterAccessory);
+  homebridge.registerAccessory('homebridge-growatt-inversor', 'GrowattInversor', GrowattInversorAccessory);
 };
 
 // ==================================================================================
 //  ACCESSORY CLASS
 // ==================================================================================
 
-class GrowattInverterAccessory {
+class GrowattInversorAccessory {
   constructor(log, config) {
     this.log = log;
     this.name = config.name || 'Inversor Solar';

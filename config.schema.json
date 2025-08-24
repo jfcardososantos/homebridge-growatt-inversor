@@ -1,5 +1,5 @@
 {
-  "pluginAlias": "GrowattInverter",
+  "pluginAlias": "GrowattInversor",
   "pluginType": "accessory",
   "singular": true,
   "headerDisplay": "🌞 <h3>Bem-vindo ao Homebridge Growatt Inversor!</h3><p>Este plugin conecta <strong>um inversor solar Growatt</strong> ao Apple HomeKit, permitindo monitorar seus dados de energia diretamente no app Casa.</p>",
