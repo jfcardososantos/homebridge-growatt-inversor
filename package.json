@@ -1,12 +1,13 @@
 {
   "name": "homebridge-growatt-inversor",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Homebridge plugin for Growatt Solar inverters",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
+    "homebridge",
     "homebridge-plugin",
     "growatt",
     "solar",
