@@ -8,7 +8,7 @@ module.exports = (homebridge) => {
   Characteristic = hap.Characteristic;
   Service = hap.Service;
   
-  homebridge.registerPlatform('homebridge-growatt', 'GrowattSolar', GrowattSolarPlatform);
+  homebridge.registerPlatform('homebridge-growatt-inversor', 'GrowattSolar', GrowattSolarPlatform);
 };
 
 class GrowattSolarPlatform {
