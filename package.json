@@ -1,6 +1,6 @@
 {
-  "name": "homebridge-growatt",
-  "version": "1.0.5",
+  "name": "homebridge-growatt-inversor",
+  "version": "1.0.0",
   "description": "Homebridge plugin for Growatt Solar inverters",
   "main": "index.js",
   "scripts": {
@@ -22,12 +22,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jfcardososantos/homebridge-growatt.git"
+    "url": "git+https://github.com/jfcardososantos/homebridge-growatt-inversor.git"
   },
   "bugs": {
-    "url": "https://github.com/jfcardososantos/homebridge-growatt/issues"
+    "url": "https://github.com/jfcardososantos/homebridge-growatt-inversor/issues"
   },
-  "homepage": "https://github.com/jfcardososantos/homebridge-growatt#readme",
+  "homepage": "https://github.com/jfcardososantos/homebridge-growatt-inversor#readme",
   "dependencies": {
     "axios": "^1.6.0",
     "node-geocoder": "^4.2.0"
