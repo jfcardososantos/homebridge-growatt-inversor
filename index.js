@@ -35,7 +35,7 @@ class GrowattSolarPlatform {
       this.setupGeocoder();
     }
     
-    this.log.info('🌞 Inicializando plugin Growatt Solar...');
+    this.log.info('🌞 Inicializando plugin Growatt Inversor...');
     
     this.api.on('didFinishLaunching', () => {
       this.showWelcomeMessage();
@@ -67,7 +67,7 @@ class GrowattSolarPlatform {
   showWelcomeMessage() {
     this.log.info('');
     this.log.info('🎉 ============================================');
-    this.log.info('🌞      GROWATT SOLAR PLUGIN ATIVO!        ');
+    this.log.info('🌞      Growatt Inversor PLUGIN ATIVO!        ');
     this.log.info('🎉 ============================================');
     this.log.info('📱 Seus dados solares aparecerão no app Casa');
     this.log.info('⚡ Monitoramento em tempo real ativado');
@@ -232,7 +232,7 @@ class GrowattSolarAccessory {
   constructor(log, config) {
     this.log = log;
     this.config = config;
-    this.name = config.plantName || 'Growatt Solar';
+    this.name = config.plantName || 'Growatt Inversor';
     this.token = config.token;
     this.plantId = config.plantId;
     this.refreshInterval = (config.refreshInterval || 5) * 60 * 1000;

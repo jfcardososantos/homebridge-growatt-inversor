@@ -1,4 +1,4 @@
-# Homebridge Growatt Solar
+# Homebridge Growatt Inversor
 
 Um plugin para Homebridge que integra inversores solares Growatt com o Apple HomeKit.
 
@@ -16,13 +16,13 @@ Um plugin para Homebridge que integra inversores solares Growatt com o Apple Hom
 
 1. Acesse a interface web do Homebridge
 2. Vá para "Plugins"
-3. Busque por "homebridge-growatt-solar"
+3. Busque por "homebridge-growatt-inversor"
 4. Clique em "Instalar"
 
 ### Via linha de comando
 
 ```bash
-npm install -g homebridge-growatt-solar
+npm install -g homebridge-growatt-inversor
 ```
 
 ## Configuração
@@ -36,7 +36,7 @@ npm install -g homebridge-growatt-solar
 
 ### Configuração via Homebridge UI
 
-1. Vá para "Plugins" → "Growatt Solar" → "Settings"
+1. Vá para "Plugins" → "Growatt Inversor" → "Settings"
 2. Insira seu token da API Growatt
 3. Configure o intervalo de atualização (padrão: 5 minutos)
 4. Salve a configuração
@@ -47,7 +47,7 @@ npm install -g homebridge-growatt-solar
 {
   "platforms": [
     {
-      "name": "Growatt Solar",
+      "name": "Growatt Inversor",
       "platform": "GrowattSolar",
       "token": "seu_token_aqui",
       "refreshInterval": 5
@@ -60,7 +60,7 @@ npm install -g homebridge-growatt-solar
 
 | Parâmetro | Tipo | Obrigatório | Padrão | Descrição |
 |-----------|------|-------------|---------|-----------|
-| `name` | string | Sim | "Growatt Solar" | Nome da plataforma |
+| `name` | string | Sim | "Growatt Inversor" | Nome da plataforma |
 | `token` | string | Sim | - | Token da API Growatt |
 | `refreshInterval` | integer | Não | 5 | Intervalo de atualização em minutos |
 
