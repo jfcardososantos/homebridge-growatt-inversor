@@ -21,8 +21,8 @@
     "energia-solar"
   ],
   "engines": {
-    "node": ">=14.0.0",
-    "homebridge": ">=1.3.0"
+    "node": ">=16.0.0",
+    "homebridge": ">=1.6.0"
   },
   "author": {
     "name": "Felipe Santos",
@@ -42,7 +42,7 @@
   },
   "devDependencies": {},
   "peerDependencies": {
-    "homebridge": ">=1.3.0"
+    "homebridge": ">=1.6.0"
   },
   "homebridge": {
     "pluginName": "homebridge-growatt-inversor",
