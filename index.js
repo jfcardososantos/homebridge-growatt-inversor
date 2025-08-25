@@ -118,29 +118,31 @@ class GrowattPlatform {
 
       this.log.info(`📊 DESCOBERTA CONCLUÍDA: ${plants.length} inversor(es) encontrado(s)`);
 
-      // Remove acessórios que não existem mais
-      const currentUUIDs = plants.map(plant => UUIDGen.generate(`growatt-${plant.plant_id}`));
-      const toRemove = this.cachedAccessories.filter(accessory => 
-        accessory && accessory.UUID && !currentUUIDs.includes(accessory.UUID)
-      );
-      
-      if (toRemove.length > 0) {
-        this.log.info(`🗑️ Removendo ${toRemove.length} acessório(s) obsoleto(s)`);
-        this.api.unregisterPlatformAccessories('homebridge-growatt-inversor', 'GrowattInversor', toRemove);
-      }
-
       const toAdd = [];
+      const processedPlantIds = new Set();
 
       for (const plant of plants) {
-        const uuid = UUIDGen.generate(`growatt-${plant.plant_id}`);
-        let accessory = this.cachedAccessories.find(acc => acc && acc.UUID === uuid);
+        const plantId = plant.plant_id;
+        const plantName = plant.name || `Inversor ${plantId}`;
+        
+        // Evitar duplicatas
+        if (processedPlantIds.has(plantId)) {
+          this.log.warn(`⚠️ Plant ID ${plantId} duplicado, ignorando...`);
+          continue;
+        }
+        processedPlantIds.add(plantId);
+        
+        const uuid = UUIDGen.generate(`growatt-${plantId}`);
+        let accessory = this.cachedAccessories.find(acc => 
+          acc && acc.context && acc.context.plantId === plantId
+        );
         
         if (!accessory) {
-          this.log.info(`➕ Criando novo acessório: ${plant.name}`);
-          accessory = new PlatformAccessory(plant.name || `Inversor ${plant.plant_id}`, uuid);
+          this.log.info(`➕ Criando novo acessório: ${plantName} (ID: ${plantId})`);
+          accessory = new PlatformAccessory(plantName, uuid);
           toAdd.push(accessory);
         } else {
-          this.log.info(`✅ Reutilizando acessório: ${plant.name}`);
+          this.log.info(`✅ Reutilizando acessório: ${plantName} (ID: ${plantId})`);
         }
 
         // Configurar contexto com validação
@@ -148,10 +150,10 @@ class GrowattPlatform {
           accessory.context = {};
         }
         
-        accessory.context.plantId = plant.plant_id;
-        accessory.context.plantName = plant.name || `Inversor ${plant.plant_id}`;
-        accessory.context.city = plant.city;
-        accessory.context.peakPower = plant.peak_power;
+        accessory.context.plantId = plantId;
+        accessory.context.plantName = plantName;
+        accessory.context.city = plant.city || 'Não informado';
+        accessory.context.peakPower = plant.peak_power || 0;
         accessory.context.isProducing = false;
         accessory.context.currentPower = 0;
         accessory.context.todayEnergy = 0;
@@ -163,7 +165,24 @@ class GrowattPlatform {
         // Iniciar monitoramento
         this.startMonitoring(accessory);
         
-        this.accessories.set(uuid, accessory);
+        // Armazenar por plant_id para facilitar acesso
+        this.accessories.set(plantId.toString(), accessory);
+        
+        this.log.info(`🔧 Inversor configurado: ${plantName} | Plant ID: ${plantId} | Peak: ${plant.peak_power}W`);
+      }
+
+      // Limpar acessórios obsoletos (que não existem mais na API)
+      const currentPlantIds = plants.map(p => p.plant_id);
+      const toRemove = this.cachedAccessories.filter(accessory => {
+        if (!accessory || !accessory.context || !accessory.context.plantId) {
+          return true; // Remove acessórios inválidos
+        }
+        return !currentPlantIds.includes(accessory.context.plantId);
+      });
+      
+      if (toRemove.length > 0) {
+        this.log.info(`🗑️ Removendo ${toRemove.length} acessório(s) obsoleto(s)`);
+        this.api.unregisterPlatformAccessories('homebridge-growatt-inversor', 'GrowattInversor', toRemove);
       }
 
       // Registrar novos acessórios
@@ -219,8 +238,7 @@ class GrowattPlatform {
 
     // Configurações do medidor de energia elétrica
     energyService
-      .setCharacteristic(Characteristic.Name, `${name} - Energia Hoje`)
-      .setCharacteristic(Characteristic.ConfiguredName, `${name} - Energia Hoje`);
+      .setCharacteristic(Characteristic.Name, `${name} - Energia Hoje`);
 
     // ⚡ Energia total consumida/gerada (hoje em kWh)
     if (!energyService.testCharacteristic(Characteristic.TotalConsumption)) {
@@ -402,7 +420,9 @@ class GrowattPlatform {
     if (accessory.updateTimer) {
       clearInterval(accessory.updateTimer);
     }
-    this.accessories.delete(accessory.UUID);
-    this.log.info(`🗑️ Acessório removido: ${accessory.context.plantName}`);
+    if (accessory.context && accessory.context.plantId) {
+      this.accessories.delete(accessory.context.plantId.toString());
+      this.log.info(`🗑️ Acessório removido: ${accessory.context.plantName} (ID: ${accessory.context.plantId})`);
+    }
   }
 }
