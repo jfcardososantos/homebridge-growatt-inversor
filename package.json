@@ -1,6 +1,6 @@
 {
   "name": "homebridge-growatt-inversor",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Plugin Homebridge para monitorar inversores solares Growatt no Apple HomeKit",
   "main": "index.js",
   "scripts": {
@@ -46,6 +46,7 @@
   },
   "homebridge": {
     "pluginName": "homebridge-growatt-inversor",
-    "displayName": "Homebridge Growatt Inversor"
+    "displayName": "Homebridge Growatt Inversor",
+    "supportsBridge": true
   }
 }

@@ -12,7 +12,7 @@ module.exports = (homebridge) => {
   Service = hap.Service;
 
   // Registra o plugin como plataforma para suportar múltiplos acessórios
-  homebridge.registerPlatform('homebridge-growatt-inversor', 'GrowattInversor', GrowattPlatform);
+  homebridge.registerPlatform('homebridge-growatt-inversor', 'GrowattInversor', GrowattPlatform, true);
 };
 
 // ==================================================================================
@@ -37,9 +37,14 @@ class GrowattPlatform {
     this.log.info(`🔑 Token: ${this.token.substring(0, 10)}...`);
 
     if (api) {
+      // Importante: aguardar o Homebridge terminar de carregar
       this.api.on('didFinishLaunching', () => {
+        this.log.info('📡 Homebridge carregado, iniciando descoberta...');
         this.discoverDevices();
       });
+    } else {
+      // Fallback caso não tenha API
+      setTimeout(() => this.discoverDevices(), 1000);
     }
   }
 
@@ -67,35 +72,45 @@ class GrowattPlatform {
       const plants = response.data.data?.plants || [];
       this.log.info(`📊 Encontrados ${plants.length} inversor(es)`);
 
-      // Remove acessórios antigos
-      this.accessories.forEach(accessory => {
-        this.api.unregisterPlatformAccessories('homebridge-growatt-inversor', 'GrowattInversor', [accessory]);
-      });
-      this.accessories = [];
+      if (plants.length === 0) {
+        this.log.warn('⚠️ Nenhum inversor encontrado na conta. Verifique se há inversores cadastrados.');
+        return;
+      }
 
       // Cria um acessório para cada inversor
-      plants.forEach(plant => {
-        this.log.info(`➕ Adicionando inversor: ${plant.name} (ID: ${plant.plant_id})`);
+      plants.forEach((plant, index) => {
+        this.log.info(`➕ Processando inversor ${index + 1}: ${plant.name} (ID: ${plant.plant_id})`);
         
         const uuid = this.api.hap.uuid.generate(`growatt-${plant.plant_id}`);
-        const accessory = new this.api.platformAccessory(plant.name, uuid);
+        
+        // Verifica se já existe este acessório
+        let accessory = this.accessories.find(acc => acc.UUID === uuid);
+        
+        if (!accessory) {
+          // Cria novo acessório
+          accessory = new this.api.platformAccessory(plant.name || `Inversor ${plant.plant_id}`, uuid);
+          this.accessories.push(accessory);
+          
+          this.log.info(`✅ Novo acessório criado: ${accessory.displayName}`);
+        } else {
+          this.log.info(`🔄 Reutilizando acessório: ${accessory.displayName}`);
+        }
         
         // Adiciona informações do inversor ao contexto
         accessory.context.plantId = plant.plant_id;
-        accessory.context.name = plant.name;
+        accessory.context.name = plant.name || `Inversor ${plant.plant_id}`;
         accessory.context.city = plant.city;
         accessory.context.country = plant.country;
         accessory.context.peakPower = plant.peak_power;
         
         // Configura o acessório
         new GrowattInversorAccessory(this.log, accessory, this.token, this.refreshInterval);
-        
-        this.accessories.push(accessory);
       });
 
       // Registra todos os acessórios
       if (this.accessories.length > 0) {
         this.api.registerPlatformAccessories('homebridge-growatt-inversor', 'GrowattInversor', this.accessories);
+        this.log.info(`🏠 ${this.accessories.length} acessório(s) registrado(s) no HomeKit`);
       }
 
     } catch (error) {
@@ -103,6 +118,10 @@ class GrowattPlatform {
       if (error.response) {
         this.log.error(`- Status HTTP: ${error.response.status}`);
         this.log.error(`- Dados: ${JSON.stringify(error.response.data)}`);
+        
+        if (error.response.status === 401) {
+          this.log.error('🔐 Token inválido ou expirado. Verifique suas credenciais.');
+        }
       } else {
         this.log.error(`- Erro: ${error.message}`);
       }
@@ -110,11 +129,15 @@ class GrowattPlatform {
   }
 
   configureAccessory(accessory) {
-    this.log.info(`🔧 Configurando acessório: ${accessory.displayName}`);
+    this.log.info(`🔧 Restaurando acessório do cache: ${accessory.displayName}`);
     this.accessories.push(accessory);
     
-    // Reconfigura o acessório com as configurações atuais
-    new GrowattInversorAccessory(this.log, accessory, this.token, this.refreshInterval);
+    // Reconfigura o acessório quando o plugin for totalmente carregado
+    if (this.api) {
+      this.api.on('didFinishLaunching', () => {
+        new GrowattInversorAccessory(this.log, accessory, this.token, this.refreshInterval);
+      });
+    }
   }
 }
 

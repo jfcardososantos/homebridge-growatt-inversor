@@ -122,5 +122,12 @@ Encontrou um bug ou tem uma sugestão? Abra uma issue no GitHub!
 
 MIT License - veja o arquivo [LICENSE](LICENSE) para detalhes.
 
+## 🙏 Agradecimentos
+
+- [Homebridge](https://homebridge.io/) - Plataforma incrível
+- [Growatt](https://www.growatt.com/) - API para desenvolvedores
+- Comunidade Homebridge - Suporte e feedback
+
+---
 
 **⚠️ Nota**: Este plugin não é oficial da Growatt. Use por sua conta e risco.
