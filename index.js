@@ -55,30 +55,46 @@ class GrowattPlatform {
   // Configurar acessórios já em cache
   configureAccessory(accessory) {
     this.log.info(`🔄 Carregando do cache: ${accessory.displayName}`);
-    this.cachedAccessories.push(accessory);
+    // Verificar se o acessório é válido antes de adicionar
+    if (accessory && accessory.UUID) {
+      this.cachedAccessories.push(accessory);
+    } else {
+      this.log.warn('⚠️ Acessório inválido encontrado no cache, ignorando...');
+    }
   }
 
   async discoverDevices() {
     this.log.info('🔍 Descobrindo inversores...');
 
     try {
+      // Limpar cache de acessórios inválidos primeiro
+      this.cachedAccessories = this.cachedAccessories.filter(acc => acc && acc.UUID);
+
       const response = await axios.get('https://openapi.growatt.com/v1/plant/list', {
         headers: { 'token': this.token },
         timeout: 15000
       });
 
-      this.log.info(`📡 API respondeu: ${JSON.stringify(response.data)}`);
+      this.log.info(`📡 API respondeu com ${response.data.data?.plants?.length || 0} inversor(es)`);
 
       if (response.data.error_code !== 0) {
         throw new Error(`API Error: ${response.data.error_msg}`);
       }
 
       const plants = response.data.data?.plants || [];
+      
+      if (plants.length === 0) {
+        this.log.warn('⚠️ Nenhum inversor encontrado na conta!');
+        return;
+      }
+
       this.log.info(`📊 ${plants.length} inversor(es) encontrado(s)`);
 
       // Remove acessórios que não existem mais
       const currentUUIDs = plants.map(plant => UUIDGen.generate(`growatt-${plant.plant_id}`));
-      const toRemove = this.cachedAccessories.filter(accessory => !currentUUIDs.includes(accessory.UUID));
+      const toRemove = this.cachedAccessories.filter(accessory => 
+        accessory && accessory.UUID && !currentUUIDs.includes(accessory.UUID)
+      );
       
       if (toRemove.length > 0) {
         this.log.info(`🗑️ Removendo ${toRemove.length} acessório(s) obsoleto(s)`);
@@ -89,7 +105,7 @@ class GrowattPlatform {
 
       for (const plant of plants) {
         const uuid = UUIDGen.generate(`growatt-${plant.plant_id}`);
-        let accessory = this.cachedAccessories.find(acc => acc.UUID === uuid);
+        let accessory = this.cachedAccessories.find(acc => acc && acc.UUID === uuid);
         
         if (!accessory) {
           this.log.info(`➕ Criando novo acessório: ${plant.name}`);
@@ -99,11 +115,19 @@ class GrowattPlatform {
           this.log.info(`✅ Reutilizando acessório: ${plant.name}`);
         }
 
-        // Configurar contexto
+        // Configurar contexto com validação
+        if (!accessory.context) {
+          accessory.context = {};
+        }
+        
         accessory.context.plantId = plant.plant_id;
         accessory.context.plantName = plant.name || `Inversor ${plant.plant_id}`;
         accessory.context.city = plant.city;
         accessory.context.peakPower = plant.peak_power;
+        accessory.context.isProducing = false;
+        accessory.context.currentPower = 0;
+        accessory.context.todayEnergy = 0;
+        accessory.context.totalEnergy = parseFloat(plant.total_energy) || 0;
 
         // Configurar serviços
         this.configureAccessoryServices(accessory);
@@ -148,10 +172,15 @@ class GrowattPlatform {
       .setCharacteristic(Characteristic.SerialNumber, accessory.context.plantId.toString())
       .setCharacteristic(Characteristic.FirmwareRevision, '1.2.0');
 
-    // 🔋 MEDIDOR DE ENERGIA PRINCIPAL - Usando SmartMeter Service
+    // 🔋 MEDIDOR DE ENERGIA PRINCIPAL - Usando Outlet com características de energia
     let energyService = accessory.getService('Produção Solar');
     if (!energyService) {
-      energyService = accessory.addService(Service.SmartMeter, 'Produção Solar', 'energy-meter');
+      // Usar Outlet que suporta medição de energia
+      energyService = accessory.addService(Service.Outlet, 'Produção Solar', 'energy-meter');
+    } else if (energyService.constructor.name !== 'Outlet') {
+      // Se existe mas é outro tipo, remover e recriar
+      accessory.removeService(energyService);
+      energyService = accessory.addService(Service.Outlet, 'Produção Solar', 'energy-meter');
     }
 
     // Configurações do medidor de energia elétrica
