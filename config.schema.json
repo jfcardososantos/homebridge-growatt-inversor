@@ -21,7 +21,7 @@
         "type": "string",
         "required": true,
         "description": "Token de acesso obtido no portal de desenvolvedores da Growatt. O plugin usará este token para descobrir todos os seus inversores automaticamente.",
-        "placeholder": "Ex: 4ox07b7r9d1n5k9eh6yqj60628319k8w",
+        "placeholder": "Ex: 4ox09d7r9d1n5k9ee3yqj60699319k9x",
         "minLength": 20,
         "pattern": "^[a-zA-Z0-9]+$"
       },
@@ -30,7 +30,7 @@
         "title": "⏱️ Intervalo de Atualização (minutos)",
         "type": "integer",
         "default": 5,
-        "minimum": 1,
+        "minimum": 3,
         "maximum": 60,
         "description": "Intervalo em minutos para buscar novos dados da API. Valores muito baixos podem exceder limites da API."
       }

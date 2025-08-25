@@ -46,7 +46,7 @@ class GrowattPlatform {
 
   configureAccessory(accessory) {
     if (accessory.context.plantId) {
-      this.log.info(`🔄 Restaurando inversor do cache: ${accessory.displayName} (Plant ID: ${accessory.context.plantId})`);
+      this.log.info(`🔌 Restaurando acessório do cache: ${accessory.displayName}`);
       this.accessories.set(accessory.context.plantId.toString(), accessory);
     } else {
       this.log.warn(`👻 Ignorando acessório do cache sem Plant ID: ${accessory.displayName}`);
@@ -69,10 +69,9 @@ class GrowattPlatform {
       const plants = response.data.data?.plants || [];
       if (plants.length === 0) {
         this.log.warn('⚠️ Nenhum inversor (planta) encontrado na sua conta.');
-        return;
       }
 
-      this.log.info(`📡 Descobertos ${plants.length} inversor(es).`);
+      this.log.info(`📡 API da Growatt retornou ${plants.length} inversor(es).`);
 
       const plantData = plants.map(plant => ({
         plantId: plant.plant_id,
@@ -81,6 +80,18 @@ class GrowattPlatform {
         peakPower: plant.peak_power || 0,
       }));
 
+      const activePlantIds = new Set(plantData.map(p => p.plantId.toString()));
+
+      // Remover acessórios que não estão mais na conta Growatt
+      for (const [plantId, accessory] of this.accessories.entries()) {
+        if (!activePlantIds.has(plantId)) {
+          this.log.info(`🗑️ Removendo inversor obsoleto: "${accessory.displayName}" (Plant ID: ${plantId})`);
+          this.api.unregisterPlatformAccessories('homebridge-growatt-inversor', 'GrowattInversor', [accessory]);
+          this.accessories.delete(plantId);
+        }
+      }
+
+      // Adicionar/Atualizar acessórios
       for (const plant of plantData) {
         const plantId = plant.plantId.toString();
         const plantName = plant.plantName;
@@ -89,7 +100,7 @@ class GrowattPlatform {
         let accessory = this.accessories.get(plantId);
 
         if (accessory) {
-          this.log.info(`✅ Inversor existente encontrado no cache: "${plantName}".`);
+          this.log.info(`✅ Verificando inversor existente: "${plantName}"`);
           accessory.displayName = plantName;
           accessory.context.plantName = plantName;
           accessory.context.city = plant.city;
@@ -110,7 +121,7 @@ class GrowattPlatform {
         this.log.info(`🔧 "${plantName}" configurado com sucesso.`);
       }
 
-      this.log.info('✅ Descoberta inicial finalizada.');
+      this.log.info('✅ Descoberta e sincronização finalizadas.');
       this.startPeriodicMonitoring(plantData);
 
     } catch (error) {
@@ -122,33 +133,36 @@ class GrowattPlatform {
 
   setupAccessoryServices(accessory) {
     const name = accessory.context.plantName;
-    this.log.info(`🔧 Configurando serviços para "${name}"...`);
+    this.log.info(`🔧 Configurando e nomeando serviços para "${name}"...`);
 
     accessory.getService(Service.AccessoryInformation)
       .setCharacteristic(Characteristic.Manufacturer, 'Growatt')
       .setCharacteristic(Characteristic.Model, 'Inversor Solar')
       .setCharacteristic(Characteristic.SerialNumber, accessory.context.plantId)
-      .setCharacteristic(Characteristic.FirmwareRevision, '2.0.0');
+      .setCharacteristic(Characteristic.FirmwareRevision, '2.2.0');
 
     const getOrCreateService = (serviceType, displayName, subtype) => {
       let service = accessory.getServiceById(serviceType, subtype);
       if (!service) {
         service = accessory.addService(serviceType, displayName, subtype);
       }
+      // Garante que o nome de exibição está sempre atualizado.
+      service.setCharacteristic(Characteristic.Name, displayName);
       return service;
     };
 
     // Sensores de Luz para exibir dados numéricos
-    getOrCreateService(Service.LightSensor, 'Produção Hoje', 'today_energy');
-    getOrCreateService(Service.LightSensor, 'Produção Atual', 'current_power');
-    getOrCreateService(Service.LightSensor, 'Produção no Mês', 'month_energy');
-    getOrCreateService(Service.LightSensor, 'Produção Total', 'total_energy');
+    getOrCreateService(Service.LightSensor, 'Produção Hoje (kWh)', 'today_energy');
+    getOrCreateService(Service.LightSensor, 'Produção Atual (W)', 'current_power');
+    getOrCreateService(Service.LightSensor, 'Produção no Mês (kWh)', 'monthly_energy');
+    getOrCreateService(Service.LightSensor, 'Produção Anual (kWh)', 'yearly_energy');
+    getOrCreateService(Service.LightSensor, 'Produção Total (kWh)', 'total_energy');
 
     // Switch para indicar status de produção
     const switchService = getOrCreateService(Service.Switch, 'Produzindo', 'producing_status');
     switchService.getCharacteristic(Characteristic.On).onGet(() => accessory.context.isProducing || false);
 
-    this.log.info(`✅ Serviços para "${name}" configurados.`);
+    this.log.info(`✅ Serviços para "${name}" nomeados e configurados.`);
   }
 
   startPeriodicMonitoring(plantData) {
@@ -172,7 +186,8 @@ class GrowattPlatform {
             const data = response.data.data;
             const currentPower = parseFloat(data.current_power) || 0;
             const todayEnergy = parseFloat(data.today_energy) || 0;
-            const monthEnergy = parseFloat(data.month_energy) || 0;
+            const monthEnergy = parseFloat(data.monthly_energy) || 0;
+            const yearlyEnergy = parseFloat(data.yearly_energy) || 0;
             const totalEnergy = parseFloat(data.total_energy) || 0;
             const isProducing = currentPower > 0.1;
 
@@ -180,12 +195,13 @@ class GrowattPlatform {
 
             accessory.getServiceById(Service.LightSensor, 'today_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, todayEnergy);
             accessory.getServiceById(Service.LightSensor, 'current_power')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, currentPower);
-            accessory.getServiceById(Service.LightSensor, 'month_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, monthEnergy);
+            accessory.getServiceById(Service.LightSensor, 'monthly_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, monthEnergy);
+            accessory.getServiceById(Service.LightSensor, 'yearly_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, yearlyEnergy);
             accessory.getServiceById(Service.LightSensor, 'total_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, totalEnergy);
             accessory.getServiceById(Service.Switch, 'producing_status')?.updateCharacteristic(Characteristic.On, isProducing);
 
             const status = isProducing ? '🟢 PRODUZINDO' : '🔴 OFFLINE';
-            this.log.info(`⚡ ${accessory.displayName}: ${currentPower.toFixed(1)}W | Hoje: ${todayEnergy.toFixed(2)}kWh | Mês: ${monthEnergy.toFixed(2)}kWh | ${status}`);
+            this.log.info(`⚡ ${accessory.displayName}: ${currentPower.toFixed(1)}W | Hoje: ${todayEnergy.toFixed(2)}kWh | Mês: ${monthEnergy.toFixed(2)}kWh | Ano: ${yearlyEnergy.toFixed(2)}kWh | ${status}`);
           } else {
             this.log.warn(`⚠️ Não foi possível obter dados para "${accessory.displayName}". API: ${response.data.error_msg || 'Erro desconhecido'}`);
             this.setAccessoryOffline(accessory);
@@ -207,7 +223,8 @@ class GrowattPlatform {
     accessory.context.isProducing = false;
     accessory.getServiceById(Service.LightSensor, 'today_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, 0);
     accessory.getServiceById(Service.LightSensor, 'current_power')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, 0);
-    accessory.getServiceById(Service.LightSensor, 'month_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, 0);
+    accessory.getServiceById(Service.LightSensor, 'monthly_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, 0);
+    // Não zeramos o anual e total, pois são acumulados históricos
     accessory.getServiceById(Service.Switch, 'producing_status')?.updateCharacteristic(Characteristic.On, false);
   }
 }
