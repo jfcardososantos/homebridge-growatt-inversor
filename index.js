@@ -7,15 +7,12 @@ let Service, Characteristic, PlatformAccessory, generateUUID;
 // ==================================================================================
 
 module.exports = (homebridge) => {
-  console.log('[Growatt] Carregando plugin...');
-  
   Service = homebridge.hap.Service;
   Characteristic = homebridge.hap.Characteristic;
   PlatformAccessory = homebridge.platformAccessory;
   generateUUID = homebridge.hap.uuid.generate;
 
   homebridge.registerPlatform('homebridge-growatt-inversor', 'GrowattInversor', GrowattPlatform, false);
-  console.log('[Growatt] Plugin registrado!');
 };
 
 // ==================================================================================
@@ -28,34 +25,36 @@ class GrowattPlatform {
     this.config = config || {};
     this.api = api;
     this.accessories = new Map();
-    this.plantIds = [];
     
     this.token = this.config.token;
     this.refreshInterval = (this.config.refreshInterval || 5) * 60 * 1000;
 
-    this.log.info('*** GROWATT PLATFORM INICIANDO ***');
-    
     if (!this.token) {
-      this.log.error('❌ Token não configurado na plataforma!');
+      this.log.error('❌ Token não configurado na plataforma! O plugin não irá iniciar.');
       return;
     }
 
-    this.log.info(`🔑 Token: ${this.token.substring(0, 10)}...`);
+    this.log.info('*** Plataforma Growatt Solar Iniciando ***');
 
     if (this.api) {
       this.api.on('didFinishLaunching', () => {
-        this.log.info('🚀 Homebridge carregado - iniciando descoberta inicial...');
+        this.log.info('🚀 Homebridge carregado. Iniciando descoberta de inversores...');
         this.initialDiscovery();
       });
     }
   }
 
   configureAccessory(accessory) {
-    this.log.info(`📄 Ignorando acessório do cache: ${accessory.displayName || 'desconhecido'}`);
+    if (accessory.context.plantId) {
+      this.log.info(`🔄 Restaurando inversor do cache: ${accessory.displayName} (Plant ID: ${accessory.context.plantId})`);
+      this.accessories.set(accessory.context.plantId.toString(), accessory);
+    } else {
+      this.log.warn(`👻 Ignorando acessório do cache sem Plant ID: ${accessory.displayName}`);
+    }
   }
 
   async initialDiscovery() {
-    this.log.info('🔍 DESCOBERTA INICIAL - Buscando Plant IDs...');
+    this.log.info('🔍 Buscando inversores na sua conta Growatt...');
 
     try {
       const response = await axios.get('https://openapi.growatt.com/v1/plant/list', {
@@ -64,107 +63,103 @@ class GrowattPlatform {
       });
 
       if (response.data.error_code !== 0) {
-        throw new Error(`API Error: ${response.data.error_msg || 'Erro desconhecido'}`);
+        throw new Error(`Erro da API Growatt: ${response.data.error_msg || 'Erro desconhecido'}`);
       }
 
       const plants = response.data.data?.plants || [];
-      
       if (plants.length === 0) {
-        this.log.warn('⚠️ Nenhum inversor encontrado na conta!');
+        this.log.warn('⚠️ Nenhum inversor (planta) encontrado na sua conta.');
         return;
       }
 
-      this.log.info(`📡 Descobertos ${plants.length} inversor(es)`);
+      this.log.info(`📡 Descobertos ${plants.length} inversor(es).`);
 
-      // Salvar Plant IDs em cache
-      this.plantIds = plants.map(plant => ({
+      const plantData = plants.map(plant => ({
         plantId: plant.plant_id,
         plantName: plant.name || `Inversor ${plant.plant_id}`,
         city: plant.city || 'Não informado',
         peakPower: plant.peak_power || 0,
-        totalEnergy: parseFloat(plant.total_energy) || 0
       }));
 
-      // Configurar acessórios - CADA UM COM UUID ÚNICO
-      for (const plantInfo of this.plantIds) {
-        this.log.info(`➕ Configurando: ${plantInfo.plantName} (Plant ID: ${plantInfo.plantId})`);
+      for (const plant of plantData) {
+        const plantId = plant.plantId.toString();
+        const plantName = plant.plantName;
+        const uuid = generateUUID(`growatt-inversor-${plantId}`);
         
-        // UUID único baseado no Plant ID específico
-        const uuid = generateUUID(`growatt-inversor-${plantInfo.plantId}`);
-        const accessory = new PlatformAccessory(plantInfo.plantName, uuid);
-        
-        accessory.context = {
-          plantId: plantInfo.plantId,
-          plantName: plantInfo.plantName,
-          city: plantInfo.city,
-          peakPower: plantInfo.peakPower,
-          isProducing: false,
-          currentPower: 0,
-          todayEnergy: 0,
-          totalEnergy: plantInfo.totalEnergy
-        };
+        let accessory = this.accessories.get(plantId);
 
-        // Configurar serviços com subtypes únicos
-        this.setupSimpleServices(accessory);
-        
-        this.accessories.set(plantInfo.plantId.toString(), accessory);
-        this.api.registerPlatformAccessories('homebridge-growatt-inversor', 'GrowattInversor', [accessory]);
-        
-        this.log.info(`🔧 ${plantInfo.plantName} configurado | Plant ID: ${plantInfo.plantId} | UUID: ${uuid}`);
+        if (accessory) {
+          this.log.info(`✅ Inversor existente encontrado no cache: "${plantName}".`);
+          accessory.displayName = plantName;
+          accessory.context.plantName = plantName;
+          accessory.context.city = plant.city;
+          accessory.context.peakPower = plant.peakPower;
+        } else {
+          this.log.info(`➕ Adicionando novo inversor: "${plantName}" (Plant ID: ${plantId})`);
+          accessory = new PlatformAccessory(plantName, uuid);
+          accessory.context.plantId = plantId;
+          accessory.context.plantName = plantName;
+          accessory.context.city = plant.city;
+          accessory.context.peakPower = plant.peakPower;
+          
+          this.accessories.set(plantId, accessory);
+          this.api.registerPlatformAccessories('homebridge-growatt-inversor', 'GrowattInversor', [accessory]);
+        }
+
+        this.setupAccessoryServices(accessory);
+        this.log.info(`🔧 "${plantName}" configurado com sucesso.`);
       }
 
-      this.log.info(`✅ DESCOBERTA INICIAL FINALIZADA: ${this.plantIds.length} inversor(es)`);
-      this.startPeriodicMonitoring();
+      this.log.info('✅ Descoberta inicial finalizada.');
+      this.startPeriodicMonitoring(plantData);
 
     } catch (error) {
-      this.log.error('❌ ERRO na descoberta inicial:');
-      this.log.error(`Mensagem: ${error.message}`);
-      
-      this.log.warn('⏳ Tentando descoberta novamente em 5 minutos...');
+      this.log.error(`❌ ERRO CRÍTICO na descoberta inicial: ${error.message}`);
+      this.log.warn('⏳ Tentando novamente em 5 minutos...');
       setTimeout(() => this.initialDiscovery(), 5 * 60 * 1000);
     }
   }
 
-  // Configurar serviços com SUBTYPEs únicos para evitar conflitos de UUID
-  setupSimpleServices(accessory) {
+  setupAccessoryServices(accessory) {
     const name = accessory.context.plantName;
-    const plantId = accessory.context.plantId;
-    
-    // Serviço de informação básico
-    const infoService = accessory.addService(Service.AccessoryInformation);
-    infoService
+    this.log.info(`🔧 Configurando serviços para "${name}"...`);
+
+    accessory.getService(Service.AccessoryInformation)
       .setCharacteristic(Characteristic.Manufacturer, 'Growatt')
       .setCharacteristic(Characteristic.Model, 'Inversor Solar')
-      .setCharacteristic(Characteristic.SerialNumber, plantId.toString())
-      .setCharacteristic(Characteristic.FirmwareRevision, '1.2.0');
+      .setCharacteristic(Characteristic.SerialNumber, accessory.context.plantId)
+      .setCharacteristic(Characteristic.FirmwareRevision, '2.0.0');
 
-    // Switch com subtype único baseado no Plant ID
-    const switchSubtype = `status-${plantId}`;
-    const switchService = accessory.addService(Service.Switch, name, switchSubtype);
-    
-    switchService
-      .getCharacteristic(Characteristic.On)
-      .onGet(() => {
-        return accessory.context.isProducing || false;
-      })
-      .onSet((value) => {
-        this.log.info(`💡 ${name}: Switch ${value ? 'ON' : 'OFF'} (somente leitura)`);
-      });
+    const getOrCreateService = (serviceType, displayName, subtype) => {
+      let service = accessory.getServiceById(serviceType, subtype);
+      if (!service) {
+        service = accessory.addService(serviceType, displayName, subtype);
+      }
+      return service;
+    };
 
-    this.log.info(`🔧 Switch configurado para: ${name} | Subtype: ${switchSubtype}`);
+    // Sensores de Luz para exibir dados numéricos
+    getOrCreateService(Service.LightSensor, 'Produção Hoje', 'today_energy');
+    getOrCreateService(Service.LightSensor, 'Produção Atual', 'current_power');
+    getOrCreateService(Service.LightSensor, 'Produção no Mês', 'month_energy');
+    getOrCreateService(Service.LightSensor, 'Produção Total', 'total_energy');
+
+    // Switch para indicar status de produção
+    const switchService = getOrCreateService(Service.Switch, 'Produzindo', 'producing_status');
+    switchService.getCharacteristic(Characteristic.On).onGet(() => accessory.context.isProducing || false);
+
+    this.log.info(`✅ Serviços para "${name}" configurados.`);
   }
 
-  startPeriodicMonitoring() {
-    this.log.info(`⏰ Iniciando monitoramento de ${this.plantIds.length} inversor(es)`);
+  startPeriodicMonitoring(plantData) {
+    this.log.info(`⏰ Iniciando monitoramento periódico para ${plantData.length} inversor(es)...`);
 
     const updateAllData = async () => {
-      this.log.info('📊 Atualizando dados...');
+      this.log.info('🔄 Atualizando dados de todos os inversores...');
 
-      for (const plantInfo of this.plantIds) {
-        const plantId = plantInfo.plantId;
-        const plantName = plantInfo.plantName;
-        const accessory = this.accessories.get(plantId.toString());
-
+      for (const plant of plantData) {
+        const plantId = plant.plantId.toString();
+        const accessory = this.accessories.get(plantId);
         if (!accessory) continue;
 
         try {
@@ -175,60 +170,44 @@ class GrowattPlatform {
 
           if (response.data.error_code === 0 && response.data.data) {
             const data = response.data.data;
-            
             const currentPower = parseFloat(data.current_power) || 0;
             const todayEnergy = parseFloat(data.today_energy) || 0;
+            const monthEnergy = parseFloat(data.month_energy) || 0;
             const totalEnergy = parseFloat(data.total_energy) || 0;
             const isProducing = currentPower > 0.1;
 
-            // Atualizar contexto
-            accessory.context.currentPower = currentPower;
-            accessory.context.todayEnergy = todayEnergy;
-            accessory.context.totalEnergy = totalEnergy;
             accessory.context.isProducing = isProducing;
 
-            // Atualizar switch - buscar pelo subtype correto
-            const switchSubtype = `status-${plantId}`;
-            const switchService = accessory.getServiceById(Service.Switch, switchSubtype);
-            if (switchService) {
-              switchService.updateCharacteristic(Characteristic.On, isProducing);
-            }
+            accessory.getServiceById(Service.LightSensor, 'today_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, todayEnergy);
+            accessory.getServiceById(Service.LightSensor, 'current_power')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, currentPower);
+            accessory.getServiceById(Service.LightSensor, 'month_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, monthEnergy);
+            accessory.getServiceById(Service.LightSensor, 'total_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, totalEnergy);
+            accessory.getServiceById(Service.Switch, 'producing_status')?.updateCharacteristic(Characteristic.On, isProducing);
 
             const status = isProducing ? '🟢 PRODUZINDO' : '🔴 OFFLINE';
-            this.log.info(`⚡ ${plantName}: ${currentPower.toFixed(1)}W | Hoje: ${todayEnergy.toFixed(2)}kWh | Total: ${totalEnergy.toFixed(2)}kWh | ${status}`);
-            
+            this.log.info(`⚡ ${accessory.displayName}: ${currentPower.toFixed(1)}W | Hoje: ${todayEnergy.toFixed(2)}kWh | Mês: ${monthEnergy.toFixed(2)}kWh | ${status}`);
           } else {
-            this.log.warn(`⚠️ ${plantName}: Dados inválidos da API`);
-            this.setOffline(accessory);
+            this.log.warn(`⚠️ Não foi possível obter dados para "${accessory.displayName}". API: ${response.data.error_msg || 'Erro desconhecido'}`);
+            this.setAccessoryOffline(accessory);
           }
-
         } catch (error) {
-          if (error.message.includes('frequently_access')) {
-            this.log.warn(`⏳ ${plantName}: Rate limit - aguardando`);
-          } else {
-            this.log.error(`❌ ${plantName}: ${error.message}`);
-          }
-          this.setOffline(accessory);
+          this.log.error(`❌ Erro ao contatar API para "${accessory.displayName}": ${error.message}`);
+          this.setAccessoryOffline(accessory);
         }
-
-        await new Promise(resolve => setTimeout(resolve, 500));
       }
     };
 
-    setTimeout(updateAllData, 10000);
-    this.monitoringTimer = setInterval(updateAllData, this.refreshInterval);
-    
-    this.log.info(`✅ Monitoramento iniciado - atualizações a cada ${this.refreshInterval / 1000 / 60} minutos`);
+    updateAllData();
+    setInterval(updateAllData, this.refreshInterval);
+    this.log.info(`✅ Monitoramento iniciado. Atualizações a cada ${this.refreshInterval / 60000} minutos.`);
   }
 
-  setOffline(accessory) {
-    const plantId = accessory.context.plantId;
-    const switchSubtype = `status-${plantId}`;
-    const switchService = accessory.getServiceById(Service.Switch, switchSubtype);
-    if (switchService) {
-      switchService.updateCharacteristic(Characteristic.On, false);
-    }
+  setAccessoryOffline(accessory) {
+    this.log.warn(`🔌 Colocando "${accessory.displayName}" em modo offline.`);
     accessory.context.isProducing = false;
-    accessory.context.currentPower = 0;
+    accessory.getServiceById(Service.LightSensor, 'today_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, 0);
+    accessory.getServiceById(Service.LightSensor, 'current_power')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, 0);
+    accessory.getServiceById(Service.LightSensor, 'month_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, 0);
+    accessory.getServiceById(Service.Switch, 'producing_status')?.updateCharacteristic(Characteristic.On, false);
   }
 }
