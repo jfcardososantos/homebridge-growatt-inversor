@@ -1,6 +1,6 @@
 const axios = require('axios');
 
-let Service, Characteristic, UUIDGen, PlatformAccessory;
+let Service, Characteristic, PlatformAccessory;
 
 // ==================================================================================
 //  MAIN PLUGIN EXPORT
@@ -11,7 +11,6 @@ module.exports = (homebridge) => {
   
   Service = homebridge.hap.Service;
   Characteristic = homebridge.hap.Characteristic;
-  UUIDGen = homebridge.hap.uuid;
   PlatformAccessory = homebridge.platformAccessory;
 
   homebridge.registerPlatform('homebridge-growatt-inversor', 'GrowattInversor', GrowattPlatform, false);
@@ -54,13 +53,19 @@ class GrowattPlatform {
 
   // Configurar acessórios já em cache
   configureAccessory(accessory) {
-    this.log.info(`🔄 Carregando do cache: ${accessory.displayName}`);
-    // Verificar se o acessório é válido antes de adicionar
-    if (accessory && accessory.UUID) {
-      this.cachedAccessories.push(accessory);
-    } else {
-      this.log.warn('⚠️ Acessório inválido encontrado no cache, ignorando...');
+    // Validação mais rigorosa do acessório
+    if (!accessory || typeof accessory !== 'object') {
+      this.log.warn('⚠️ Acessório inválido (null/undefined) encontrado no cache, ignorando...');
+      return;
     }
+
+    if (!accessory.context || !accessory.context.plantId) {
+      this.log.warn('⚠️ Acessório sem Plant ID encontrado no cache, ignorando...');
+      return;
+    }
+
+    this.log.info(`📄 Carregando do cache: ${accessory.displayName} (Plant ID: ${accessory.context.plantId})`);
+    this.cachedAccessories.push(accessory);
   }
 
   // Descoberta com retry automático para erro de rate limit
@@ -95,8 +100,10 @@ class GrowattPlatform {
     this.log.info('🔍 Descobrindo inversores... (DESCOBERTA INICIAL - só executa na inicialização)');
 
     try {
-      // Limpar cache de acessórios inválidos primeiro
-      this.cachedAccessories = this.cachedAccessories.filter(acc => acc && acc.UUID);
+      // Limpar acessórios inválidos primeiro
+      this.cachedAccessories = this.cachedAccessories.filter(acc => {
+        return acc && acc.context && acc.context.plantId;
+      });
 
       const response = await axios.get('https://openapi.growatt.com/v1/plant/list', {
         headers: { 'token': this.token },
@@ -132,17 +139,20 @@ class GrowattPlatform {
         }
         processedPlantIds.add(plantId);
         
-        const uuid = UUIDGen.generate(`growatt-${plantId}`);
+        // Buscar acessório existente pelo Plant ID
         let accessory = this.cachedAccessories.find(acc => 
           acc && acc.context && acc.context.plantId === plantId
         );
         
         if (!accessory) {
-          this.log.info(`➕ Criando novo acessório: ${plantName} (ID: ${plantId})`);
+          this.log.info(`➕ Criando novo acessório: ${plantName} (Plant ID: ${plantId})`);
+          
+          // Criar UUID baseado no Plant ID para garantir unicidade
+          const uuid = this.generateUUIDFromPlantId(plantId);
           accessory = new PlatformAccessory(plantName, uuid);
           toAdd.push(accessory);
         } else {
-          this.log.info(`✅ Reutilizando acessório: ${plantName} (ID: ${plantId})`);
+          this.log.info(`✅ Reutilizando acessório: ${plantName} (Plant ID: ${plantId})`);
         }
 
         // Configurar contexto com validação
@@ -210,6 +220,33 @@ class GrowattPlatform {
     }
   }
 
+  // Gerar UUID determinístico baseado no Plant ID
+  generateUUIDFromPlantId(plantId) {
+    // Usar um namespace fixo + Plant ID para garantir que o mesmo Plant ID sempre gere o mesmo UUID
+    const namespace = 'growatt-solar-';
+    const input = namespace + plantId.toString();
+    
+    // Criar um hash simples determinístico para usar como UUID
+    let hash = 0;
+    for (let i = 0; i < input.length; i++) {
+      const char = input.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Converter para 32bit integer
+    }
+    
+    // Converter para formato UUID-like (8-4-4-4-12)
+    const hashStr = Math.abs(hash).toString(16).padStart(8, '0');
+    const uuid = [
+      hashStr.substr(0, 8),
+      '4' + hashStr.substr(1, 3), // Versão 4 UUID
+      '8' + hashStr.substr(4, 3), // Variant bits
+      hashStr.substr(0, 4),
+      (plantId.toString() + '000000000000').substr(0, 12) // Plant ID como sufixo
+    ].join('-');
+    
+    return uuid;
+  }
+
   configureAccessoryServices(accessory) {
     const name = accessory.context.plantName;
     
@@ -250,7 +287,7 @@ class GrowattPlatform {
       energyService.addCharacteristic(Characteristic.CurrentPowerConsumption);
     }
 
-    // 🔆 Status de produção (ativo/inativo)
+    // 📆 Status de produção (ativo/inativo)
     energyService
       .getCharacteristic(Characteristic.On)
       .onGet(() => {
@@ -345,7 +382,7 @@ class GrowattPlatform {
             // 🔌 Potência atual em Watts
             energyService.updateCharacteristic(Characteristic.CurrentPowerConsumption, currentPower);
             
-            // 🔆 Voltagem da rede (220V padrão brasileiro)
+            // 📆 Voltagem da rede (220V padrão brasileiro)
             energyService.updateCharacteristic(Characteristic.Voltage, 220);
           }
 
