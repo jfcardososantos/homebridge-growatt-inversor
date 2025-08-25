@@ -85,11 +85,12 @@ class GrowattPlatform {
         totalEnergy: parseFloat(plant.total_energy) || 0
       }));
 
-      // Configurar acessórios - SUPER SIMPLES
+      // Configurar acessórios - CADA UM COM UUID ÚNICO
       for (const plantInfo of this.plantIds) {
         this.log.info(`➕ Configurando: ${plantInfo.plantName} (Plant ID: ${plantInfo.plantId})`);
         
-        const uuid = generateUUID(`growatt-${plantInfo.plantId}`);
+        // UUID único baseado no Plant ID específico
+        const uuid = generateUUID(`growatt-inversor-${plantInfo.plantId}`);
         const accessory = new PlatformAccessory(plantInfo.plantName, uuid);
         
         accessory.context = {
@@ -103,13 +104,13 @@ class GrowattPlatform {
           totalEnergy: plantInfo.totalEnergy
         };
 
-        // Configurar serviços SIMPLES
+        // Configurar serviços com subtypes únicos
         this.setupSimpleServices(accessory);
         
         this.accessories.set(plantInfo.plantId.toString(), accessory);
         this.api.registerPlatformAccessories('homebridge-growatt-inversor', 'GrowattInversor', [accessory]);
         
-        this.log.info(`🔧 ${plantInfo.plantName} configurado | Plant ID: ${plantInfo.plantId}`);
+        this.log.info(`🔧 ${plantInfo.plantName} configurado | Plant ID: ${plantInfo.plantId} | UUID: ${uuid}`);
       }
 
       this.log.info(`✅ DESCOBERTA INICIAL FINALIZADA: ${this.plantIds.length} inversor(es)`);
@@ -124,20 +125,22 @@ class GrowattPlatform {
     }
   }
 
-  // Configurar serviços ULTRA SIMPLES - só switches
+  // Configurar serviços com SUBTYPEs únicos para evitar conflitos de UUID
   setupSimpleServices(accessory) {
     const name = accessory.context.plantName;
+    const plantId = accessory.context.plantId;
     
     // Serviço de informação básico
     const infoService = accessory.addService(Service.AccessoryInformation);
     infoService
       .setCharacteristic(Characteristic.Manufacturer, 'Growatt')
       .setCharacteristic(Characteristic.Model, 'Inversor Solar')
-      .setCharacteristic(Characteristic.SerialNumber, accessory.context.plantId.toString())
+      .setCharacteristic(Characteristic.SerialNumber, plantId.toString())
       .setCharacteristic(Characteristic.FirmwareRevision, '1.2.0');
 
-    // UM ÚNICO SWITCH simples - Status do inversor
-    const switchService = accessory.addService(Service.Switch, name);
+    // Switch com subtype único baseado no Plant ID
+    const switchSubtype = `status-${plantId}`;
+    const switchService = accessory.addService(Service.Switch, name, switchSubtype);
     
     switchService
       .getCharacteristic(Characteristic.On)
@@ -148,7 +151,7 @@ class GrowattPlatform {
         this.log.info(`💡 ${name}: Switch ${value ? 'ON' : 'OFF'} (somente leitura)`);
       });
 
-    this.log.info(`🔧 Switch configurado para: ${name}`);
+    this.log.info(`🔧 Switch configurado para: ${name} | Subtype: ${switchSubtype}`);
   }
 
   startPeriodicMonitoring() {
@@ -184,8 +187,9 @@ class GrowattPlatform {
             accessory.context.totalEnergy = totalEnergy;
             accessory.context.isProducing = isProducing;
 
-            // Atualizar switch simples
-            const switchService = accessory.getService(Service.Switch);
+            // Atualizar switch - buscar pelo subtype correto
+            const switchSubtype = `status-${plantId}`;
+            const switchService = accessory.getServiceById(Service.Switch, switchSubtype);
             if (switchService) {
               switchService.updateCharacteristic(Characteristic.On, isProducing);
             }
@@ -218,7 +222,9 @@ class GrowattPlatform {
   }
 
   setOffline(accessory) {
-    const switchService = accessory.getService(Service.Switch);
+    const plantId = accessory.context.plantId;
+    const switchSubtype = `status-${plantId}`;
+    const switchService = accessory.getServiceById(Service.Switch, switchSubtype);
     if (switchService) {
       switchService.updateCharacteristic(Characteristic.On, false);
     }
