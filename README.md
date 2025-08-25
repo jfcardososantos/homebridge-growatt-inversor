@@ -1,168 +1,126 @@
 # Homebridge Growatt Inversor
 
-Um plugin para Homebridge que integra inversores solares Growatt com o Apple HomeKit.
+Plugin para Homebridge que conecta seus inversores solares Growatt ao Apple HomeKit, permitindo monitorar dados de energia diretamente no app Casa.
 
-## Funcionalidades
+## 🌟 Características
 
-- ✅ Monitore a potência atual do seu sistema solar
-- ✅ Acompanhe a produção de energia do dia
-- ✅ Verifique o status online/offline do inversor
-- ✅ Suporte a múltiplas plantas
-- ✅ Interface de configuração via Homebridge UI
+- **🔍 Descoberta automática** - Encontra todos os inversores da sua conta automaticamente
+- **📊 Múltiplos inversores** - Suporta quantos inversores você tiver
+- **🏠 Integração HomeKit** - Cada inversor aparece como um acessório separado
+- **⏰ Atualização em tempo real** - Dados atualizados automaticamente
+- **🌍 Interface em português** - Configuração e logs em português
 
-## Instalação
+## 📱 Sensores criados para cada inversor
 
-### Via Homebridge UI (Recomendado)
+Cada inversor cria 4 sensores no HomeKit:
 
-1. Acesse a interface web do Homebridge
-2. Vá para "Plugins"
-3. Busque por "homebridge-growatt-inversor"
-4. Clique em "Instalar"
+- **💡 Potência Atual** - Mostra a potência em tempo real (Watts)
+- **💧 Energia Hoje** - Energia gerada no dia atual (kWh)
+- **📊 Energia Total** - Energia total acumulada (kWh)
+- **🟢 Status** - Indica se o inversor está online/offline
 
-### Via linha de comando
+## 🚀 Instalação
+
+### Via Homebridge Config UI X (Recomendado)
+
+1. Abra a interface web do Homebridge
+2. Vá em **Plugins** → **Buscar**
+3. Procure por `homebridge-growatt-inversor`
+4. Clique em **Instalar**
+
+### Via NPM
 
 ```bash
 npm install -g homebridge-growatt-inversor
 ```
 
-## Configuração
+## ⚙️ Configuração
 
-### Obtendo o Token da API
+### 1. Obter Token da API Growatt
 
-1. Acesse o portal de desenvolvedor da Growatt
-2. Faça login com sua conta
-3. Gere um token de API
-4. Copie o token para usar na configuração
+1. Acesse: https://openapi.growatt.com
+2. Faça login com suas credenciais Growatt
+3. Vá em **API Token**
+4. Gere/copie seu token de acesso
 
-### Configuração via Homebridge UI
+### 2. Configurar no Homebridge
 
-1. Vá para "Plugins" → "Growatt Inversor" → "Settings"
-2. Insira seu token da API Growatt
-3. Configure o intervalo de atualização (padrão: 5 minutos)
-4. Salve a configuração
+#### Via Interface Web:
+1. Vá em **Plugins** → **Homebridge Growatt Inversor** → **Configurações**
+2. Preencha apenas o **Token da API**
+3. Salve e reinicie o Homebridge
 
-### Configuração Manual (config.json)
-
+#### Via config.json manual:
 ```json
 {
   "platforms": [
     {
-      "name": "Growatt Inversor",
-      "platform": "GrowattSolar",
+      "name": "Growatt Solar",
       "token": "seu_token_aqui",
-      "refreshInterval": 5
+      "refreshInterval": 5,
+      "platform": "GrowattInversor"
     }
   ]
 }
 ```
 
-## Parâmetros de Configuração
+## 📋 Parâmetros de Configuração
 
-| Parâmetro | Tipo | Obrigatório | Padrão | Descrição |
-|-----------|------|-------------|---------|-----------|
-| `name` | string | Sim | "Growatt Inversor" | Nome da plataforma |
-| `token` | string | Sim | - | Token da API Growatt |
-| `refreshInterval` | integer | Não | 5 | Intervalo de atualização em minutos |
+| Parâmetro | Obrigatório | Padrão | Descrição |
+|-----------|-------------|---------|-----------|
+| `name` | ✅ | "Growatt Solar" | Nome da plataforma nos logs |
+| `token` | ✅ | - | Token da API Growatt |
+| `refreshInterval` | ❌ | 5 | Intervalo de atualização (minutos) |
 
-## Como Funciona no HomeKit
+## 🔧 Como funciona
 
-O plugin cria os seguintes sensores para cada planta:
+1. **Descoberta**: O plugin usa seu token para buscar todos os inversores da conta via `/plant/list`
+2. **Criação**: Cada inversor encontrado vira um acessório HomeKit separado
+3. **Monitoramento**: Cada inversor é atualizado independentemente via `/plant/data`
 
-### Sensor de Potência Atual
-- **Tipo**: Sensor de Luz
-- **Função**: Mostra a potência atual em kW
-- **Visualização**: Valor em "lux" (dividido por 10 para caber na escala)
+## 📊 Exemplo de uso no HomeKit
 
-### Sensor de Energia do Dia
-- **Tipo**: Sensor de Umidade
-- **Função**: Mostra a produção de energia do dia
-- **Visualização**: Percentual baseado nos dados da planta
+Digamos que você tenha 2 inversores:
+- **"Casa Principal"** → 4 sensores (Potência, Energia Hoje, Total, Status)  
+- **"Galpão"** → 4 sensores (Potência, Energia Hoje, Total, Status)
 
-### Sensor de Status
-- **Tipo**: Sensor de Contato
-- **Função**: Indica se o inversor está online
-- **Estados**: 
-  - Fechado = Online
-  - Aberto = Offline
+Você pode criar automações como:
+- Notificação quando a potência passa de um valor
+- Monitorar produção diária de energia
+- Alertas quando inversor fica offline
 
-## Solução de Problemas
+## 🐛 Resolução de Problemas
 
-### Plugin não aparece no HomeKit
-
-1. Verifique se o token está correto
-2. Confirme se há plantas associadas à sua conta Growatt
-3. Verifique os logs do Homebridge para erros
+### Plugin não encontra inversores
+- Verifique se o token está correto
+- Confirme que sua conta Growatt tem inversores cadastrados
+- Verifique os logs do Homebridge para erros de API
 
 ### Dados não atualizam
+- Verifique sua conexão com a internet
+- Confirme se a API da Growatt está funcionando
+- Tente diminuir o `refreshInterval`
 
-1. Verifique sua conexão com a internet
-2. Confirme se a API da Growatt está respondendo
-3. Tente reduzir o intervalo de atualização
-
-### Valores incorretos
-
-1. Os valores são mapeados para funcionar com os tipos de sensor do HomeKit
-2. A potência é dividida por 10 para caber na escala do sensor de luz
-3. A energia do dia é convertida em percentual
-
-## Logs de Debug
-
-Para habilitar logs detalhados, configure o nível de log do Homebridge como "debug":
-
-```json
-{
-  "bridge": {
-    "name": "Homebridge",
-    "username": "CC:22:3D:E3:CE:30",
-    "port": 51826,
-    "pin": "031-45-154"
-  },
-  "accessories": [],
-  "platforms": [],
-  "disabledPlugins": [],
-  "ports": {
-    "start": 52100,
-    "end": 52150,
-    "comment": "This section is used to control the range of ports that separate accessory (like camera or television) should be bind to."
-  },
-  "log": {
-    "method": "systemd",
-    "service": "homebridge",
-    "level": "debug"
-  }
-}
+### Logs para debug
+Ative logs de debug no Homebridge para ver detalhes:
+```bash
+homebridge -D
 ```
 
-## Contribuindo
+## 📝 Logs importantes
 
-1. Fork este repositório
-2. Crie uma branch para sua feature (`git checkout -b feature/nova-funcionalidade`)
-3. Commit suas mudanças (`git commit -am 'Adiciona nova funcionalidade'`)
-4. Push para a branch (`git push origin feature/nova-funcionalidade`)
-5. Abra um Pull Request
+O plugin gera logs informativos:
+- `🔍 Buscando inversores na conta...`
+- `📊 Encontrados X inversor(es)`
+- `✅ Nome do Inversor: 1500W, Hoje: 25.5kWh, Total: 2847.3kWh, Online`
 
-## Problemas Conhecidos
+## 🤝 Contribuição
 
-- Os valores são mapeados para tipos de sensor do HomeKit não ideais devido às limitações da API
-- A atualização em tempo real pode ser limitada pela taxa de limite da API Growatt
-- Alguns dados podem não estar disponíveis dependendo do modelo do inversor
+Encontrou um bug ou tem uma sugestão? Abra uma issue no GitHub!
 
-## Changelog
+## 📄 Licença
 
-### v1.0.0
-- Lançamento inicial
-- Suporte a múltiplas plantas
-- Monitoramento de potência, energia e status
-- Interface de configuração via Homebridge UI
+MIT License - veja o arquivo [LICENSE](LICENSE) para detalhes.
 
-## Licença
 
-MIT
-
-## Suporte
-
-Se você encontrar problemas ou tiver sugestões:
-
-1. Verifique os [Issues](https://github.com/jfcardososantos/homebridge-growatt-inversor/issues) existentes
-2. Crie um novo issue com detalhes do problema
-3. Inclua logs relevantes do Homebridge
+**⚠️ Nota**: Este plugin não é oficial da Growatt. Use por sua conta e risco.

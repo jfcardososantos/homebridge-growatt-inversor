@@ -1,42 +1,67 @@
 {
   "pluginAlias": "GrowattInversor",
-  "pluginType": "accessory",
+  "pluginType": "platform",
   "singular": true,
-  "headerDisplay": "🌞 <h3>Bem-vindo ao Homebridge Growatt Inversor!</h3><p>Este plugin conecta <strong>um inversor solar Growatt</strong> ao Apple HomeKit, permitindo monitorar seus dados de energia diretamente no app Casa.</p>",
-  "footerDisplay": "<div style='background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #007bff; margin-top: 20px;'><h4>🔑 Como obter suas credenciais:</h4><ol><li>Acesse o <a href='https://openapi.growatt.com' target='_blank'>Portal de Desenvolvedor Growatt</a>.</li><li>Faça login e vá em <strong>API Token</strong> para gerar seu token.</li><li>Para o <strong>ID da Planta</strong>, na mesma página, vá em <strong>API Test</strong> e use a chamada <strong>plant/list</strong>. O ID aparecerá na resposta.</li><li>Copie o <strong>Token</strong> e o <strong>ID da Planta</strong> nos campos abaixo.</li></ol></div>",
+  "headerDisplay": "🌞 <h3>Homebridge Growatt Platform</h3><p>Este plugin conecta <strong>todos os seus inversores solares Growatt</strong> ao Apple HomeKit automaticamente!</p><p><strong>📡 Funcionalidade:</strong></p><ul><li>🔍 <strong>Descoberta automática</strong> - Busca todos os inversores da sua conta</li><li>📊 <strong>Múltiplos inversores</strong> - Cada inversor vira um acessório separado</li><li>🏠 <strong>4 sensores por inversor:</strong> Potência atual, Energia hoje, Energia total, Status online</li></ul><p><strong>⚠️ Importante:</strong> Agora você só precisa do TOKEN - os inversores são descobertos automaticamente!</p>",
+  "footerDisplay": "<div style='background: #f8f9fa; padding: 20px; border-radius: 8px; border-left: 4px solid #28a745; margin-top: 20px;'><h4>🔑 Como obter seu Token:</h4><ol><li><strong>Acesse:</strong> <a href='https://openapi.growatt.com' target='_blank'>https://openapi.growatt.com</a></li><li><strong>Faça login</strong> com suas credenciais Growatt</li><li><strong>Vá em API Token</strong> e gere/copie seu token de acesso</li><li><strong>Cole o token abaixo</strong> - pronto! O plugin encontrará todos os inversores automaticamente</li></ol><p><strong>✨ Novidade:</strong> Não precisa mais do Plant ID - o plugin descobre todos os inversores da sua conta!</p></div>",
   "schema": {
     "type": "object",
     "properties": {
       "name": {
-        "title": "🏷️ Nome do Inversor",
+        "title": "🏷️ Nome da Plataforma",
         "type": "string",
-        "default": "Inversor Solar",
+        "default": "Growatt Solar",
         "required": true,
-        "description": "Nome que aparecerá para este inversor no app Casa."
+        "description": "Nome da plataforma que aparecerá nos logs do Homebridge.",
+        "minLength": 1,
+        "maxLength": 50
       },
       "token": {
         "title": "🔑 Token da API Growatt",
         "type": "string",
         "required": true,
-        "description": "Seu token de acesso obtido no portal de desenvolvedor Growatt.",
-        "placeholder": "ex: 4ox07b7r9d1n5k9eh6yqj60628319k8w"
+        "description": "Token de acesso obtido no portal de desenvolvedores da Growatt. O plugin usará este token para descobrir todos os seus inversores automaticamente.",
+        "placeholder": "Ex: 4ox07b7r9d1n5k9eh6yqj60628319k8w",
+        "minLength": 20,
+        "pattern": "^[a-zA-Z0-9]+$"
       },
-      "plant_id": {
-        "title": "🌱 ID da Planta (Inversor)",
-        "type": "string",
-        "required": true,
-        "description": "O ID numérico da sua planta/inversor Growatt.",
-        "placeholder": "ex: 1234567"
-      },
+
       "refreshInterval": {
         "title": "⏱️ Intervalo de Atualização (minutos)",
         "type": "integer",
         "default": 5,
         "minimum": 1,
         "maximum": 60,
-        "description": "A cada quantos minutos os dados serão atualizados."
+        "description": "Intervalo em minutos para buscar novos dados da API. Valores muito baixos podem exceder limites da API."
       }
     },
-    "required": ["name", "token", "plant_id"]
-  }
+    "required": ["name", "token"]
+  },
+  "layout": [
+    {
+      "type": "fieldset",
+      "title": "⚙️ Configurações Básicas",
+      "expandable": false,
+      "items": [
+        "name"
+      ]
+    },
+    {
+      "type": "fieldset", 
+      "title": "🔐 Token da API Growatt",
+      "expandable": false,
+      "items": [
+        "token"
+      ]
+    },
+    {
+      "type": "fieldset",
+      "title": "🔧 Configurações Avançadas", 
+      "expandable": true,
+      "expanded": false,
+      "items": [
+        "refreshInterval"
+      ]
+    }
+  ]
 }

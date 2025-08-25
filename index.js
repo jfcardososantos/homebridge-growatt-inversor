@@ -11,92 +11,233 @@ module.exports = (homebridge) => {
   Characteristic = hap.Characteristic;
   Service = hap.Service;
 
-  // Registra o plugin como um acessório único
-  homebridge.registerAccessory('homebridge-growatt-inversor', 'GrowattInversor', GrowattInversorAccessory);
+  // Registra o plugin como plataforma para suportar múltiplos acessórios
+  homebridge.registerPlatform('homebridge-growatt-inversor', 'GrowattInversor', GrowattPlatform);
 };
 
 // ==================================================================================
-//  ACCESSORY CLASS
+//  PLATFORM CLASS - Gerencia múltiplos inversores
 // ==================================================================================
 
-class GrowattInversorAccessory {
-  constructor(log, config) {
+class GrowattPlatform {
+  constructor(log, config, api) {
     this.log = log;
-    this.name = config.name || 'Inversor Solar';
+    this.config = config;
+    this.api = api;
     this.token = config.token;
-    this.plantId = config.plant_id;
-    this.refreshInterval = (config.refreshInterval || 5) * 60 * 1000; // Padrão 5 minutos
+    this.refreshInterval = (config.refreshInterval || 5) * 60 * 1000;
+    this.accessories = [];
 
-    // Validação da configuração
-    if (!this.token || !this.plantId) {
-      this.log.error('Token da API ou ID da Planta não configurados. Verifique suas configurações.');
+    if (!this.token) {
+      this.log.error('❌ Token da API não configurado. Verifique suas configurações.');
       return;
     }
 
-    this.log.info(`Inicializando acessório: ${this.name}`);
+    this.log.info('🌞 Inicializando Growatt Platform');
+    this.log.info(`🔑 Token: ${this.token.substring(0, 10)}...`);
 
-    // Armazenamento de estado
+    if (api) {
+      this.api.on('didFinishLaunching', () => {
+        this.discoverDevices();
+      });
+    }
+  }
+
+  /**
+   * Busca todos os inversores da conta
+   */
+  async discoverDevices() {
+    this.log.info('🔍 Buscando inversores na conta...');
+
+    try {
+      const response = await axios.get('https://openapi.growatt.com/v1/plant/list', {
+        headers: { 
+          'token': this.token,
+          'Content-Type': 'application/json'
+        },
+        timeout: 15000
+      });
+
+      this.log.debug('📡 Resposta plant/list:', JSON.stringify(response.data));
+
+      if (response.data.error_code !== 0) {
+        throw new Error(`API Error: ${response.data.error_msg} (Code: ${response.data.error_code})`);
+      }
+
+      const plants = response.data.data?.plants || [];
+      this.log.info(`📊 Encontrados ${plants.length} inversor(es)`);
+
+      // Remove acessórios antigos
+      this.accessories.forEach(accessory => {
+        this.api.unregisterPlatformAccessories('homebridge-growatt-inversor', 'GrowattInversor', [accessory]);
+      });
+      this.accessories = [];
+
+      // Cria um acessório para cada inversor
+      plants.forEach(plant => {
+        this.log.info(`➕ Adicionando inversor: ${plant.name} (ID: ${plant.plant_id})`);
+        
+        const uuid = this.api.hap.uuid.generate(`growatt-${plant.plant_id}`);
+        const accessory = new this.api.platformAccessory(plant.name, uuid);
+        
+        // Adiciona informações do inversor ao contexto
+        accessory.context.plantId = plant.plant_id;
+        accessory.context.name = plant.name;
+        accessory.context.city = plant.city;
+        accessory.context.country = plant.country;
+        accessory.context.peakPower = plant.peak_power;
+        
+        // Configura o acessório
+        new GrowattInversorAccessory(this.log, accessory, this.token, this.refreshInterval);
+        
+        this.accessories.push(accessory);
+      });
+
+      // Registra todos os acessórios
+      if (this.accessories.length > 0) {
+        this.api.registerPlatformAccessories('homebridge-growatt-inversor', 'GrowattInversor', this.accessories);
+      }
+
+    } catch (error) {
+      this.log.error('❌ Erro ao buscar inversores:');
+      if (error.response) {
+        this.log.error(`- Status HTTP: ${error.response.status}`);
+        this.log.error(`- Dados: ${JSON.stringify(error.response.data)}`);
+      } else {
+        this.log.error(`- Erro: ${error.message}`);
+      }
+    }
+  }
+
+  configureAccessory(accessory) {
+    this.log.info(`🔧 Configurando acessório: ${accessory.displayName}`);
+    this.accessories.push(accessory);
+    
+    // Reconfigura o acessório com as configurações atuais
+    new GrowattInversorAccessory(this.log, accessory, this.token, this.refreshInterval);
+  }
+}
+
+// ==================================================================================
+//  ACCESSORY CLASS - Cada inversor individual
+// ==================================================================================
+
+class GrowattInversorAccessory {
+  constructor(log, accessory, token, refreshInterval) {
+    this.log = log;
+    this.accessory = accessory;
+    this.token = token;
+    this.refreshInterval = refreshInterval;
+    
+    // Dados do inversor
+    this.plantId = accessory.context.plantId;
+    this.name = accessory.context.name;
+    this.city = accessory.context.city || 'Desconhecida';
+    this.country = accessory.context.country || 'Brasil';
+    this.peakPower = accessory.context.peakPower || 0;
+
+    // Estado do inversor
     this.state = {
-      currentPower: 0,  // Potência atual em W
-      todayEnergy: 0,   // Energia de hoje em kWh
-      totalEnergy: 0,   // Energia total em kWh
-      status: 'Offline' // 'Online' ou 'Offline'
+      currentPower: 0,
+      todayEnergy: 0,
+      totalEnergy: 0,
+      monthlyEnergy: 0,
+      yearlyEnergy: 0,
+      lastUpdate: '',
+      status: false
     };
 
-    // --- SERVIÇOS HOMEKIT ---
-
-    // 1. Serviço de Informação do Acessório
-    this.informationService = new Service.AccessoryInformation()
-      .setCharacteristic(Characteristic.Manufacturer, 'Growatt')
-      .setCharacteristic(Characteristic.Model, 'Inversor Solar')
-      .setCharacteristic(Characteristic.SerialNumber, this.plantId.toString());
-
-    // 2. Sensor de Potência Atual (usando Sensor de Luz Ambiente)
-    // A potência em Watts será o valor em Lux.
-    this.powerService = new Service.LightSensor(`${this.name} - Potência`, 'power');
-    this.powerService.getCharacteristic(Characteristic.CurrentAmbientLightLevel)
-      .onGet(() => this.state.currentPower)
-      .setProps({ minValue: 0, maxValue: 100000 }); // Limite de 100kW
-
-    // 3. Sensor de Energia do Dia (usando Sensor de Umidade)
-    // A energia em kWh será o valor da umidade (%).
-    this.todayEnergyService = new Service.HumiditySensor(`${this.name} - Energia Hoje`, 'today_energy');
-    this.todayEnergyService.getCharacteristic(Characteristic.CurrentRelativeHumidity)
-      .onGet(() => this.state.todayEnergy)
-      .setProps({ minValue: 0, maxValue: 1000 }); // Limite de 1000 kWh
-
-    // 4. Sensor de Status (usando Sensor de Contato)
-    this.statusService = new Service.ContactSensor(`${this.name} - Status`, 'status');
-    this.statusService.getCharacteristic(Characteristic.ContactSensorState)
-      .onGet(() => this.state.status === 'Online' ? Characteristic.ContactSensorState.CONTACT_DETECTED : Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
-
-    // Inicia o ciclo de atualizações
+    this.log.info(`🚀 Configurando inversor: ${this.name} (${this.city})`);
+    this.setupServices();
     this.startPeriodicUpdates();
   }
 
   /**
-   * Inicia as chamadas periódicas à API da Growatt.
+   * Configura os serviços HomeKit
    */
-  startPeriodicUpdates() {
-    this.log.info(`Iniciando atualizações a cada ${this.refreshInterval / 60000} minutos.`);
+  setupServices() {
+    // 1. Serviço de Informação
+    const infoService = this.accessory.getService(Service.AccessoryInformation) ||
+                       this.accessory.addService(Service.AccessoryInformation);
     
-    // Executa a primeira atualização logo após a inicialização
-    setTimeout(() => this.updateData(), 1000);
+    infoService
+      .setCharacteristic(Characteristic.Manufacturer, 'Growatt')
+      .setCharacteristic(Characteristic.Model, `Inversor Solar ${this.peakPower}W`)
+      .setCharacteristic(Characteristic.SerialNumber, this.plantId.toString())
+      .setCharacteristic(Characteristic.FirmwareRevision, '1.1.0')
+      .setCharacteristic(Characteristic.Name, this.name);
 
-    // Configura o intervalo para as próximas atualizações
-    setInterval(() => this.updateData(), this.refreshInterval);
+    // 2. Sensor de Potência (Light Sensor)
+    this.powerService = this.accessory.getService(`${this.name} Potencia`) ||
+                       this.accessory.addService(Service.LightSensor, `${this.name} Potencia`, 'power');
+    
+    this.powerService
+      .getCharacteristic(Characteristic.CurrentAmbientLightLevel)
+      .setProps({ minValue: 0, maxValue: 100000, minStep: 1 })
+      .onGet(() => this.state.currentPower);
+
+    // 3. Sensor de Energia Hoje (Humidity Sensor)
+    this.todayService = this.accessory.getService(`${this.name} Hoje`) ||
+                       this.accessory.addService(Service.HumiditySensor, `${this.name} Hoje`, 'today');
+    
+    this.todayService
+      .getCharacteristic(Characteristic.CurrentRelativeHumidity)
+      .setProps({ minValue: 0, maxValue: 100, minStep: 0.1 })
+      .onGet(() => Math.min(this.state.todayEnergy, 100));
+
+    // 4. Sensor de Status (Contact Sensor)
+    this.statusService = this.accessory.getService(`${this.name} Status`) ||
+                        this.accessory.addService(Service.ContactSensor, `${this.name} Status`, 'status');
+    
+    this.statusService
+      .getCharacteristic(Characteristic.ContactSensorState)
+      .onGet(() => this.state.status ? 
+        Characteristic.ContactSensorState.CONTACT_DETECTED : 
+        Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
+
+    // 5. Sensor de Energia Total (outro Light Sensor)
+    this.totalService = this.accessory.getService(`${this.name} Total`) ||
+                       this.accessory.addService(Service.LightSensor, `${this.name} Total`, 'total');
+    
+    this.totalService
+      .getCharacteristic(Characteristic.CurrentAmbientLightLevel)
+      .setProps({ minValue: 0, maxValue: 999999, minStep: 0.1 })
+      .onGet(() => this.state.totalEnergy);
+
+    this.log.info(`✅ Serviços configurados para: ${this.name}`);
   }
 
   /**
-   * Busca os dados mais recentes da API e atualiza os serviços HomeKit.
+   * Inicia atualizações periódicas
+   */
+  startPeriodicUpdates() {
+    // Primeira atualização em 3 segundos
+    setTimeout(() => this.updateData(), 3000);
+    
+    // Atualizações periódicas
+    if (this.updateTimer) {
+      clearInterval(this.updateTimer);
+    }
+    
+    this.updateTimer = setInterval(() => this.updateData(), this.refreshInterval);
+    this.log.info(`⏰ Atualizações configuradas para ${this.name} (${this.refreshInterval / 60000}min)`);
+  }
+
+  /**
+   * Busca dados da API e atualiza sensores
    */
   async updateData() {
-    this.log.debug('Buscando dados do inversor...');
+    this.log.debug(`🔄 Atualizando dados: ${this.name}`);
 
     try {
-      const response = await axios.get(`https://openapi.growatt.com/v1/plant/data?plant_id=${this.plantId}`, {
-        headers: { 'token': this.token },
-        timeout: 10000 // Timeout de 10 segundos
+      const url = `https://openapi.growatt.com/v1/plant/data?plant_id=${this.plantId}`;
+      
+      const response = await axios.get(url, {
+        headers: { 
+          'token': this.token,
+          'Content-Type': 'application/json'
+        },
+        timeout: 15000
       });
 
       if (response.data.error_code !== 0) {
@@ -104,46 +245,50 @@ class GrowattInversorAccessory {
       }
 
       const data = response.data.data;
-      this.log.debug('Dados recebidos:', data);
+      if (!data) {
+        throw new Error('Dados não encontrados na resposta');
+      }
 
-      // Atualiza o estado interno
-      // A API retorna 'current_power' em W, então não precisa de conversão.
+      // Atualiza estado
       this.state.currentPower = parseFloat(data.current_power) || 0;
       this.state.todayEnergy = parseFloat(data.today_energy) || 0;
       this.state.totalEnergy = parseFloat(data.total_energy) || 0;
-      this.state.status = this.state.currentPower > 0 ? 'Online' : 'Offline';
+      this.state.monthlyEnergy = parseFloat(data.monthly_energy) || 0;
+      this.state.yearlyEnergy = parseFloat(data.yearly_energy) || 0;
+      this.state.lastUpdate = data.last_update_time || '';
+      this.state.status = this.state.currentPower > 0;
 
-      // Atualiza os valores nos serviços HomeKit
+      // Atualiza características
       this.powerService.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, this.state.currentPower);
-      this.todayEnergyService.updateCharacteristic(Characteristic.CurrentRelativeHumidity, this.state.todayEnergy);
-      this.statusService.updateCharacteristic(Characteristic.ContactSensorState, this.state.status === 'Online' ? Characteristic.ContactSensorState.CONTACT_DETECTED : Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
+      this.todayService.updateCharacteristic(Characteristic.CurrentRelativeHumidity, Math.min(this.state.todayEnergy, 100));
+      this.statusService.updateCharacteristic(Characteristic.ContactSensorState, 
+        this.state.status ? Characteristic.ContactSensorState.CONTACT_DETECTED : Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
+      this.totalService.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, this.state.totalEnergy);
 
-      this.log.info(`Dados atualizados: Potência: ${this.state.currentPower}W, Energia Hoje: ${this.state.todayEnergy}kWh, Status: ${this.state.status}`);
+      this.log.info(`✅ ${this.name}: ${this.state.currentPower}W, Hoje: ${this.state.todayEnergy}kWh, Total: ${this.state.totalEnergy}kWh, ${this.state.status ? 'Online' : 'Offline'}`);
 
     } catch (error) {
-      this.log.error('Falha ao buscar dados da Growatt:');
+      this.log.error(`❌ Erro ao atualizar ${this.name}:`);
       if (error.response) {
-        this.log.error(`- Status: ${error.response.status}`);
-        this.log.error(`- Data: ${JSON.stringify(error.response.data)}`);
+        this.log.error(`- Status: ${error.response.status}, Dados: ${JSON.stringify(error.response.data)}`);
       } else {
-        this.log.error(`- Mensagem: ${error.message}`);
+        this.log.error(`- ${error.message}`);
       }
 
-      // Define um estado de erro
-      this.state.status = 'Offline';
-      this.statusService.updateCharacteristic(Characteristic.ContactSensorState, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
+      // Marca como offline
+      this.state.status = false;
+      this.statusService.updateCharacteristic(Characteristic.ContactSensorState, 
+        Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
     }
   }
 
   /**
-   * Retorna a lista de serviços que este acessório expõe.
+   * Cleanup
    */
-  getServices() {
-    return [
-      this.informationService,
-      this.powerService,
-      this.todayEnergyService,
-      this.statusService
-    ];
+  destroy() {
+    if (this.updateTimer) {
+      clearInterval(this.updateTimer);
+      this.updateTimer = null;
+    }
   }
 }
