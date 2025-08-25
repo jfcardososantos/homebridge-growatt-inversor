@@ -1,20 +1,21 @@
 const axios = require('axios');
 
+let Service, Characteristic, UUIDGen, PlatformAccessory;
+
 // ==================================================================================
 //  MAIN PLUGIN EXPORT
 // ==================================================================================
 
 module.exports = (homebridge) => {
-  console.log('[Growatt] Plugin carregando...');
+  console.log('[Growatt] Carregando plugin...');
   
-  const { hap } = homebridge;
-  const Characteristic = hap.Characteristic;
-  const Service = hap.Service;
+  Service = homebridge.hap.Service;
+  Characteristic = homebridge.hap.Characteristic;
+  UUIDGen = homebridge.hap.uuid;
+  PlatformAccessory = homebridge.platformAccessory;
 
-  // Registra como plataforma dinâmica
-  homebridge.registerPlatform('homebridge-growatt-inversor', 'GrowattInversor', GrowattPlatform, true);
-  
-  console.log('[Growatt] Plugin registrado com sucesso!');
+  homebridge.registerPlatform('homebridge-growatt-inversor', 'GrowattInversor', GrowattPlatform, false);
+  console.log('[Growatt] Plugin registrado!');
 };
 
 // ==================================================================================
@@ -26,104 +27,105 @@ class GrowattPlatform {
     this.log = log;
     this.config = config || {};
     this.api = api;
-    this.accessories = [];
+    this.cachedAccessories = [];
     
     this.token = this.config.token;
     this.refreshInterval = (this.config.refreshInterval || 5) * 60 * 1000;
 
-    this.log.info('=== GROWATT PLATFORM INICIANDO ===');
+    this.log.info('*** GROWATT PLATFORM INICIANDO ***');
     
     if (!this.token) {
-      this.log.error('❌ ERRO: Token não configurado!');
+      this.log.error('❌ Token não configurado na plataforma!');
       return;
     }
 
-    this.log.info(`🔑 Token configurado: ${this.token.substring(0, 10)}...`);
+    this.log.info(`🔑 Token: ${this.token.substring(0, 10)}...`);
 
-    // Aguarda o Homebridge terminar de carregar
+    this.accessories = new Map();
+
+    // Aguarda carregar completamente
     if (this.api) {
       this.api.on('didFinishLaunching', () => {
-        this.log.info('🚀 Homebridge carregou, iniciando descoberta...');
-        setTimeout(() => {
-          this.discoverDevices();
-        }, 2000);
+        this.log.info('🚀 Homebridge carregado - iniciando descoberta...');
+        this.discoverDevices();
       });
     }
   }
 
-  // Restaura acessórios do cache
+  // Configurar acessórios já em cache
   configureAccessory(accessory) {
-    this.log.info(`🔧 Restaurando do cache: ${accessory.displayName}`);
-    this.accessories.push(accessory);
+    this.log.info(`🔄 Carregando do cache: ${accessory.displayName}`);
+    this.cachedAccessories.push(accessory);
   }
 
   async discoverDevices() {
-    this.log.info('🔍 === BUSCANDO INVERSORES ===');
+    this.log.info('🔍 Descobrindo inversores...');
 
     try {
-      this.log.info(`📡 Fazendo chamada para API...`);
-      
       const response = await axios.get('https://openapi.growatt.com/v1/plant/list', {
-        headers: { 
-          'token': this.token
-        },
-        timeout: 20000
+        headers: { 'token': this.token },
+        timeout: 15000
       });
 
-      this.log.info(`✅ Resposta recebida: ${JSON.stringify(response.data)}`);
+      this.log.info(`📡 API respondeu: ${JSON.stringify(response.data)}`);
 
       if (response.data.error_code !== 0) {
-        throw new Error(`Erro da API: ${response.data.error_msg}`);
+        throw new Error(`API Error: ${response.data.error_msg}`);
       }
 
       const plants = response.data.data?.plants || [];
-      this.log.info(`📊 Encontrados ${plants.length} inversor(es)`);
+      this.log.info(`📊 ${plants.length} inversor(es) encontrado(s)`);
 
-      if (plants.length === 0) {
-        this.log.warn('⚠️ Nenhum inversor encontrado na sua conta');
-        return;
+      // Remove acessórios que não existem mais
+      const currentUUIDs = plants.map(plant => UUIDGen.generate(`growatt-${plant.plant_id}`));
+      const toRemove = this.cachedAccessories.filter(accessory => !currentUUIDs.includes(accessory.UUID));
+      
+      if (toRemove.length > 0) {
+        this.log.info(`🗑️ Removendo ${toRemove.length} acessório(s) obsoleto(s)`);
+        this.api.unregisterPlatformAccessories('homebridge-growatt-inversor', 'GrowattInversor', toRemove);
       }
 
-      // Remove acessórios antigos
-      if (this.accessories.length > 0) {
-        this.log.info('🗑️ Removendo acessórios antigos...');
-        this.api.unregisterPlatformAccessories('homebridge-growatt-inversor', 'GrowattInversor', this.accessories);
-        this.accessories = [];
-      }
+      const toAdd = [];
 
-      // Cria acessórios
       for (const plant of plants) {
-        this.log.info(`➕ Criando acessório para: ${plant.name} (ID: ${plant.plant_id})`);
+        const uuid = UUIDGen.generate(`growatt-${plant.plant_id}`);
+        let accessory = this.cachedAccessories.find(acc => acc.UUID === uuid);
         
-        const uuid = this.api.hap.uuid.generate(`growatt-${plant.plant_id}`);
-        const accessory = new this.api.platformAccessory(plant.name || `Inversor ${plant.plant_id}`, uuid);
-        
-        // Salva dados no contexto
+        if (!accessory) {
+          this.log.info(`➕ Criando novo acessório: ${plant.name}`);
+          accessory = new PlatformAccessory(plant.name || `Inversor ${plant.plant_id}`, uuid);
+          toAdd.push(accessory);
+        } else {
+          this.log.info(`✅ Reutilizando acessório: ${plant.name}`);
+        }
+
+        // Configurar contexto
         accessory.context.plantId = plant.plant_id;
-        accessory.context.name = plant.name;
-        accessory.context.token = this.token;
-        accessory.context.refreshInterval = this.refreshInterval;
+        accessory.context.plantName = plant.name || `Inversor ${plant.plant_id}`;
+        accessory.context.city = plant.city;
+        accessory.context.peakPower = plant.peak_power;
+
+        // Configurar serviços
+        this.configureAccessoryServices(accessory);
         
-        // Configura serviços
-        this.setupAccessoryServices(accessory);
+        // Iniciar monitoramento
+        this.startMonitoring(accessory);
         
-        this.accessories.push(accessory);
+        this.accessories.set(uuid, accessory);
       }
 
-      // Registra no HomeKit
-      if (this.accessories.length > 0) {
-        this.log.info(`🏠 Registrando ${this.accessories.length} acessório(s) no HomeKit...`);
-        this.api.registerPlatformAccessories('homebridge-growatt-inversor', 'GrowattInversor', this.accessories);
-        
-        // Inicia monitoramento
-        this.accessories.forEach(accessory => {
-          this.startMonitoring(accessory);
-        });
+      // Registrar novos acessórios
+      if (toAdd.length > 0) {
+        this.log.info(`🏠 Registrando ${toAdd.length} novo(s) acessório(s)`);
+        this.api.registerPlatformAccessories('homebridge-growatt-inversor', 'GrowattInversor', toAdd);
       }
+
+      this.log.info(`✅ ${plants.length} inversor(es) configurado(s) com sucesso!`);
 
     } catch (error) {
-      this.log.error('❌ ERRO ao descobrir dispositivos:');
-      this.log.error(`Erro: ${error.message}`);
+      this.log.error('❌ ERRO na descoberta:');
+      this.log.error(`Mensagem: ${error.message}`);
+      
       if (error.response) {
         this.log.error(`Status: ${error.response.status}`);
         this.log.error(`Data: ${JSON.stringify(error.response.data)}`);
@@ -131,90 +133,124 @@ class GrowattPlatform {
     }
   }
 
-  setupAccessoryServices(accessory) {
-    const name = accessory.context.name;
+  configureAccessoryServices(accessory) {
+    const name = accessory.context.plantName;
     
     // Serviço de informação
-    const infoService = accessory.getService(this.api.hap.Service.AccessoryInformation) ||
-                       accessory.addService(this.api.hap.Service.AccessoryInformation);
+    let infoService = accessory.getService(Service.AccessoryInformation);
+    if (!infoService) {
+      infoService = accessory.addService(Service.AccessoryInformation);
+    }
     
     infoService
-      .setCharacteristic(this.api.hap.Characteristic.Manufacturer, 'Growatt')
-      .setCharacteristic(this.api.hap.Characteristic.Model, 'Inversor Solar')
-      .setCharacteristic(this.api.hap.Characteristic.SerialNumber, accessory.context.plantId.toString());
+      .setCharacteristic(Characteristic.Manufacturer, 'Growatt')
+      .setCharacteristic(Characteristic.Model, 'Inversor Solar')
+      .setCharacteristic(Characteristic.SerialNumber, accessory.context.plantId.toString())
+      .setCharacteristic(Characteristic.FirmwareRevision, '1.1.1');
 
     // Sensor de potência (Light Sensor)
-    const powerService = accessory.getService('Potencia') ||
-                        accessory.addService(this.api.hap.Service.LightSensor, 'Potencia', 'power');
+    let powerService = accessory.getService('Potencia');
+    if (!powerService) {
+      powerService = accessory.addService(Service.LightSensor, 'Potencia', 'power');
+    }
     
-    powerService.getCharacteristic(this.api.hap.Characteristic.CurrentAmbientLightLevel)
-      .setProps({ minValue: 0, maxValue: 100000 });
+    powerService
+      .getCharacteristic(Characteristic.CurrentAmbientLightLevel)
+      .setProps({ 
+        minValue: 0, 
+        maxValue: 100000,
+        minStep: 1 
+      });
 
     // Sensor de energia hoje (Humidity)
-    const todayService = accessory.getService('Energia Hoje') ||
-                        accessory.addService(this.api.hap.Service.HumiditySensor, 'Energia Hoje', 'today');
+    let todayService = accessory.getService('Energia Hoje');
+    if (!todayService) {
+      todayService = accessory.addService(Service.HumiditySensor, 'Energia Hoje', 'today');
+    }
     
-    todayService.getCharacteristic(this.api.hap.Characteristic.CurrentRelativeHumidity)
-      .setProps({ minValue: 0, maxValue: 100 });
+    todayService
+      .getCharacteristic(Characteristic.CurrentRelativeHumidity)
+      .setProps({ 
+        minValue: 0, 
+        maxValue: 100,
+        minStep: 0.1 
+      });
 
     // Sensor de status (Contact)
-    const statusService = accessory.getService('Status') ||
-                         accessory.addService(this.api.hap.Service.ContactSensor, 'Status', 'status');
+    let statusService = accessory.getService('Status');
+    if (!statusService) {
+      statusService = accessory.addService(Service.ContactSensor, 'Status', 'status');
+    }
 
-    this.log.info(`✅ Serviços configurados para: ${name}`);
+    this.log.info(`🔧 Serviços configurados para: ${name}`);
   }
 
   startMonitoring(accessory) {
     const plantId = accessory.context.plantId;
-    const token = accessory.context.token;
-    const interval = accessory.context.refreshInterval;
+    const name = accessory.context.plantName;
     
-    this.log.info(`⏰ Iniciando monitoramento: ${accessory.displayName}`);
+    // Limpar timer existente se houver
+    if (accessory.updateTimer) {
+      clearInterval(accessory.updateTimer);
+    }
+
+    this.log.info(`⏰ Iniciando monitoramento: ${name}`);
 
     const updateData = async () => {
       try {
         const response = await axios.get(`https://openapi.growatt.com/v1/plant/data?plant_id=${plantId}`, {
-          headers: { 'token': token },
-          timeout: 15000
+          headers: { 'token': this.token },
+          timeout: 10000
         });
 
-        if (response.data.error_code === 0) {
+        if (response.data.error_code === 0 && response.data.data) {
           const data = response.data.data;
           
           const currentPower = parseFloat(data.current_power) || 0;
           const todayEnergy = parseFloat(data.today_energy) || 0;
+          const totalEnergy = parseFloat(data.total_energy) || 0;
           const isOnline = currentPower > 0;
 
-          // Atualiza sensores
+          // Atualizar sensores
           const powerService = accessory.getService('Potencia');
-          const todayService = accessory.getService('Energia Hoje');
-          const statusService = accessory.getService('Status');
-
           if (powerService) {
-            powerService.updateCharacteristic(this.api.hap.Characteristic.CurrentAmbientLightLevel, currentPower);
+            powerService.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, currentPower);
           }
           
+          const todayService = accessory.getService('Energia Hoje');
           if (todayService) {
-            todayService.updateCharacteristic(this.api.hap.Characteristic.CurrentRelativeHumidity, Math.min(todayEnergy, 100));
+            todayService.updateCharacteristic(Characteristic.CurrentRelativeHumidity, Math.min(todayEnergy, 100));
           }
           
+          const statusService = accessory.getService('Status');
           if (statusService) {
-            statusService.updateCharacteristic(this.api.hap.Characteristic.ContactSensorState, 
-              isOnline ? this.api.hap.Characteristic.ContactSensorState.CONTACT_DETECTED : 
-                        this.api.hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
+            statusService.updateCharacteristic(
+              Characteristic.ContactSensorState, 
+              isOnline ? Characteristic.ContactSensorState.CONTACT_DETECTED : Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
+            );
           }
 
-          this.log.info(`📊 ${accessory.displayName}: ${currentPower}W, Hoje: ${todayEnergy}kWh, ${isOnline ? 'Online' : 'Offline'}`);
+          this.log.info(`📊 ${name}: ${currentPower}W | Hoje: ${todayEnergy}kWh | Total: ${totalEnergy}kWh | ${isOnline ? 'Online' : 'Offline'}`);
+        } else {
+          this.log.warn(`⚠️ ${name}: Dados inválidos recebidos da API`);
         }
       } catch (error) {
-        this.log.error(`❌ Erro ao atualizar ${accessory.displayName}: ${error.message}`);
+        this.log.error(`❌ ${name}: Erro ao atualizar - ${error.message}`);
       }
     };
 
-    // Primeira atualização em 5 segundos
-    setTimeout(updateData, 5000);
+    // Primeira atualização em 3 segundos
+    setTimeout(updateData, 3000);
     
     // Atualização periódica
-    setInterval(updateData, interval);
+    accessory.updateTimer = setInterval(updateData, this.refreshInterval);
+  }
+
+  // Cleanup quando removido
+  removeAccessory(accessory) {
+    if (accessory.updateTimer) {
+      clearInterval(accessory.updateTimer);
+    }
+    this.accessories.delete(accessory.UUID);
   }
 }
