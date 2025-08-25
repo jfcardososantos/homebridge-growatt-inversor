@@ -47,7 +47,7 @@ class GrowattPlatform {
     if (this.api) {
       this.api.on('didFinishLaunching', () => {
         this.log.info('🚀 Homebridge carregado - iniciando descoberta...');
-        this.discoverDevices();
+        this.discoverDevicesWithRetry();
       });
     }
   }
@@ -63,8 +63,36 @@ class GrowattPlatform {
     }
   }
 
+  // Descoberta com retry automático para erro de rate limit
+  async discoverDevicesWithRetry(retryCount = 0) {
+    const maxRetries = 3;
+    const retryDelay = 5 * 60 * 1000; // 5 minutos
+    
+    try {
+      await this.discoverDevices();
+    } catch (error) {
+      const isRateLimitError = error.message.includes('frequently_access') || 
+                              error.message.includes('rate') || 
+                              error.message.includes('limit');
+      
+      if (isRateLimitError && retryCount < maxRetries) {
+        this.log.warn(`⏳ Rate limit detectado. Tentativa ${retryCount + 1}/${maxRetries + 1}. Aguardando 5 minutos...`);
+        
+        setTimeout(() => {
+          this.log.info(`🔄 Tentando descoberta novamente (tentativa ${retryCount + 2}/${maxRetries + 1})...`);
+          this.discoverDevicesWithRetry(retryCount + 1);
+        }, retryDelay);
+        
+      } else if (retryCount >= maxRetries) {
+        this.log.error(`❌ Falha na descoberta após ${maxRetries + 1} tentativas. Verifique suas credenciais ou tente mais tarde.`);
+      } else {
+        this.log.error(`❌ Erro não relacionado a rate limit: ${error.message}`);
+      }
+    }
+  }
+
   async discoverDevices() {
-    this.log.info('🔍 Descobrindo inversores...');
+    this.log.info('🔍 Descobrindo inversores... (DESCOBERTA INICIAL - só executa na inicialização)');
 
     try {
       // Limpar cache de acessórios inválidos primeiro
@@ -75,10 +103,10 @@ class GrowattPlatform {
         timeout: 15000
       });
 
-      this.log.info(`📡 API respondeu com ${response.data.data?.plants?.length || 0} inversor(es)`);
+      this.log.info(`📡 API de descoberta respondeu com ${response.data.data?.plants?.length || 0} inversor(es)`);
 
       if (response.data.error_code !== 0) {
-        throw new Error(`API Error: ${response.data.error_msg}`);
+        throw new Error(`API Error: ${response.data.error_msg || 'Erro desconhecido'}`);
       }
 
       const plants = response.data.data?.plants || [];
@@ -88,7 +116,7 @@ class GrowattPlatform {
         return;
       }
 
-      this.log.info(`📊 ${plants.length} inversor(es) encontrado(s)`);
+      this.log.info(`📊 DESCOBERTA CONCLUÍDA: ${plants.length} inversor(es) encontrado(s)`);
 
       // Remove acessórios que não existem mais
       const currentUUIDs = plants.map(plant => UUIDGen.generate(`growatt-${plant.plant_id}`));
@@ -144,16 +172,22 @@ class GrowattPlatform {
         this.api.registerPlatformAccessories('homebridge-growatt-inversor', 'GrowattInversor', toAdd);
       }
 
-      this.log.info(`✅ ${plants.length} inversor(es) configurado(s) com sucesso!`);
+      this.log.info(`✅ DESCOBERTA FINALIZADA: ${plants.length} inversor(es) configurado(s) com sucesso!`);
+      this.log.info('🔄 Agora os dados dos inversores serão monitorados individualmente a cada 5 minutos');
 
     } catch (error) {
-      this.log.error('❌ ERRO na descoberta:');
+      this.log.error('❌ ERRO na descoberta inicial:');
       this.log.error(`Mensagem: ${error.message}`);
       
       if (error.response) {
-        this.log.error(`Status: ${error.response.status}`);
-        this.log.error(`Data: ${JSON.stringify(error.response.data)}`);
+        this.log.error(`Status HTTP: ${error.response.status}`);
+        if (error.response.data) {
+          this.log.error(`Resposta da API: ${JSON.stringify(error.response.data)}`);
+        }
       }
+      
+      // Re-lançar o erro para ser tratado pelo retry
+      throw error;
     }
   }
 
@@ -254,10 +288,11 @@ class GrowattPlatform {
       clearInterval(accessory.updateTimer);
     }
 
-    this.log.info(`⏰ Iniciando monitoramento de energia: ${name}`);
+    this.log.info(`⏰ Iniciando monitoramento contínuo de energia: ${name} (Plant ID: ${plantId})`);
 
     const updateData = async () => {
       try {
+        // ESTA é a chamada que roda a cada 5 minutos - só busca dados do inversor específico
         const response = await axios.get(`https://openapi.growatt.com/v1/plant/data?plant_id=${plantId}`, {
           headers: { 'token': this.token },
           timeout: 10000
@@ -314,22 +349,30 @@ class GrowattPlatform {
           this.log.info(`⚡ ${name}: ${currentPower.toFixed(1)}W | Hoje: ${todayEnergy.toFixed(2)}kWh | Total: ${totalEnergy.toFixed(2)}kWh | ${status}`);
           
         } else {
-          this.log.warn(`⚠️ ${name}: Dados inválidos recebidos da API`);
+          this.log.warn(`⚠️ ${name}: Dados inválidos recebidos da API de monitoramento`);
+          if (response.data.error_msg) {
+            this.log.warn(`⚠️ ${name}: API Error: ${response.data.error_msg}`);
+          }
           this.handleOfflineStatus(accessory);
         }
       } catch (error) {
-        this.log.error(`❌ ${name}: Erro ao atualizar - ${error.message}`);
+        // Para erros de monitoramento individual, não paramos tudo - só logamos
+        if (error.message.includes('frequently_access')) {
+          this.log.warn(`⏳ ${name}: Rate limit no monitoramento - aguardando próximo ciclo`);
+        } else {
+          this.log.error(`❌ ${name}: Erro no monitoramento individual - ${error.message}`);
+        }
         this.handleOfflineStatus(accessory);
       }
     };
 
-    // Primeira atualização em 3 segundos
-    setTimeout(updateData, 3000);
+    // Primeira atualização em 10 segundos (dar tempo para a descoberta completar)
+    setTimeout(updateData, 10000);
     
     // Atualização periódica a cada intervalo configurado
     accessory.updateTimer = setInterval(updateData, this.refreshInterval);
     
-    this.log.info(`🔄 ${name}: Atualizações a cada ${this.refreshInterval / 1000 / 60} minutos`);
+    this.log.info(`🔄 ${name}: Monitoramento configurado - atualizações a cada ${this.refreshInterval / 1000 / 60} minutos`);
   }
 
   // Tratar status offline
