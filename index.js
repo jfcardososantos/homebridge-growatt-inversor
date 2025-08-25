@@ -148,41 +148,67 @@ class GrowattPlatform {
       .setCharacteristic(Characteristic.SerialNumber, accessory.context.plantId.toString())
       .setCharacteristic(Characteristic.FirmwareRevision, '1.1.1');
 
-    // Sensor de potência (Light Sensor)
-    let powerService = accessory.getService('Potencia');
-    if (!powerService) {
-      powerService = accessory.addService(Service.LightSensor, 'Potencia', 'power');
+    // BOTÃO PRINCIPAL - Tomada que simula medidor de energia
+    let mainService = accessory.getService(name);
+    if (!mainService) {
+      mainService = accessory.addService(Service.Outlet, name, 'main');
     }
     
-    powerService
+    // Configura o botão principal
+    mainService
+      .getCharacteristic(Characteristic.On)
+      .onGet(() => {
+        // Retorna true se estiver produzindo energia
+        return accessory.context.isProducing || false;
+      })
+      .onSet((value) => {
+        // Não permite desligar o inversor, apenas mostra status
+        this.log.info(`💡 ${name}: Tentativa de ${value ? 'ligar' : 'desligar'} (apenas leitura)`);
+      });
+
+    // Adiciona consumo de energia (irá mostrar a energia do dia)
+    mainService
+      .getCharacteristic(Characteristic.OutletInUse)
+      .onGet(() => accessory.context.isProducing || false);
+
+    // CARACTERÍSTICAS EXTRAS DE ENERGIA
+    // Potência atual em Watts
+    if (!mainService.testCharacteristic(Characteristic.CurrentPowerConsumption)) {
+      mainService.addCharacteristic(Characteristic.CurrentPowerConsumption);
+    }
+    
+    // Energia total consumida (usaremos para energia gerada do dia)
+    if (!mainService.testCharacteristic(Characteristic.TotalConsumption)) {
+      mainService.addCharacteristic(Characteristic.TotalConsumption);
+    }
+
+    // Voltagem
+    if (!mainService.testCharacteristic(Characteristic.Voltage)) {
+      mainService.addCharacteristic(Characteristic.Voltage);
+    }
+
+    // SENSORES EXTRAS (mantidos para compatibilidade)
+    // Sensor de potência total acumulada
+    let totalService = accessory.getService('Energia Total');
+    if (!totalService) {
+      totalService = accessory.addService(Service.LightSensor, 'Energia Total', 'total');
+    }
+    
+    totalService
       .getCharacteristic(Characteristic.CurrentAmbientLightLevel)
       .setProps({ 
         minValue: 0, 
-        maxValue: 100000,
-        minStep: 1 
-      });
-
-    // Sensor de energia hoje (Humidity)
-    let todayService = accessory.getService('Energia Hoje');
-    if (!todayService) {
-      todayService = accessory.addService(Service.HumiditySensor, 'Energia Hoje', 'today');
-    }
-    
-    todayService
-      .getCharacteristic(Characteristic.CurrentRelativeHumidity)
-      .setProps({ 
-        minValue: 0, 
-        maxValue: 100,
+        maxValue: 999999,
         minStep: 0.1 
       });
 
-    // Sensor de status (Contact)
-    let statusService = accessory.getService('Status');
+    // Sensor de status detalhado
+    let statusService = accessory.getService('Status Detalhado');
     if (!statusService) {
-      statusService = accessory.addService(Service.ContactSensor, 'Status', 'status');
+      statusService = accessory.addService(Service.ContactSensor, 'Status Detalhado', 'status');
     }
 
-    this.log.info(`🔧 Serviços configurados para: ${name}`);
+    this.log.info(`🔧 Medidor de energia configurado para: ${name}`);
   }
 
   startMonitoring(accessory) {
@@ -211,18 +237,39 @@ class GrowattPlatform {
           const totalEnergy = parseFloat(data.total_energy) || 0;
           const isOnline = currentPower > 0;
 
-          // Atualizar sensores
-          const powerService = accessory.getService('Potencia');
-          if (powerService) {
-            powerService.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, currentPower);
+          // Atualizar contexto
+          accessory.context.currentPower = currentPower;
+          accessory.context.todayEnergy = todayEnergy;
+          accessory.context.totalEnergy = totalEnergy;
+          accessory.context.isProducing = isOnline;
+
+          // ATUALIZAR BOTÃO PRINCIPAL (Tomada/Medidor)
+          const mainService = accessory.getService(name);
+          if (mainService) {
+            // Status do botão (ligado/desligado)
+            mainService.updateCharacteristic(Characteristic.On, isOnline);
+            mainService.updateCharacteristic(Characteristic.OutletInUse, isOnline);
+            
+            // Potência atual em Watts
+            mainService.updateCharacteristic(Characteristic.CurrentPowerConsumption, currentPower);
+            
+            // Energia do dia (convertendo kWh para Wh para melhor precisão)
+            const todayEnergyWh = todayEnergy * 1000; // kWh para Wh
+            mainService.updateCharacteristic(Characteristic.TotalConsumption, todayEnergyWh);
+            
+            // Voltagem simulada (padrão brasileiro 220V)
+            mainService.updateCharacteristic(Characteristic.Voltage, 220);
+          }
+
+          // ATUALIZAR SENSORES EXTRAS
+          // Sensor de energia total
+          const totalService = accessory.getService('Energia Total');
+          if (totalService) {
+            totalService.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, totalEnergy);
           }
           
-          const todayService = accessory.getService('Energia Hoje');
-          if (todayService) {
-            todayService.updateCharacteristic(Characteristic.CurrentRelativeHumidity, Math.min(todayEnergy, 100));
-          }
-          
-          const statusService = accessory.getService('Status');
+          // Sensor de status detalhado
+          const statusService = accessory.getService('Status Detalhado');
           if (statusService) {
             statusService.updateCharacteristic(
               Characteristic.ContactSensorState, 
@@ -230,12 +277,19 @@ class GrowattPlatform {
             );
           }
 
-          this.log.info(`📊 ${name}: ${currentPower}W | Hoje: ${todayEnergy}kWh | Total: ${totalEnergy}kWh | ${isOnline ? 'Online' : 'Offline'}`);
+          this.log.info(`📊 ${name}: ${currentPower}W | Hoje: ${todayEnergy}kWh | Total: ${totalEnergy}kWh | ${isOnline ? '🟢 Produzindo' : '🔴 Offline'}`);
         } else {
           this.log.warn(`⚠️ ${name}: Dados inválidos recebidos da API`);
         }
       } catch (error) {
         this.log.error(`❌ ${name}: Erro ao atualizar - ${error.message}`);
+        
+        // Marcar como offline em caso de erro
+        const mainService = accessory.getService(name);
+        if (mainService) {
+          mainService.updateCharacteristic(Characteristic.On, false);
+          mainService.updateCharacteristic(Characteristic.OutletInUse, false);
+        }
       }
     };
 

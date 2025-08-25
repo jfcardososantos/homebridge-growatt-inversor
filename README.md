@@ -10,14 +10,24 @@ Plugin para Homebridge que conecta seus inversores solares Growatt ao Apple Home
 - **⏰ Atualização em tempo real** - Dados atualizados automaticamente
 - **🌍 Interface em português** - Configuração e logs em português
 
-## 📱 Sensores criados para cada inversor
+## 📱 Como aparece no app Casa
 
-Cada inversor cria 4 sensores no HomeKit:
+Cada inversor aparece como um **botão grande** no app Casa com:
 
-- **💡 Potência Atual** - Mostra a potência em tempo real (Watts)
-- **💧 Energia Hoje** - Energia gerada no dia atual (kWh)
-- **📊 Energia Total** - Energia total acumulada (kWh)
-- **🟢 Status** - Indica se o inversor está online/offline
+### 🔘 **Botão Principal (Medidor de Energia)**
+- **Nome do inversor** como título do botão
+- **Estado**: 🟢 Verde (produzindo) ou ⚫ Cinza (offline)
+- **Ao tocar**: Abre detalhes com todas as informações
+
+### 📊 **Detalhes no botão (características de energia):**
+- **Potência Atual**: Watts sendo gerados agora
+- **Energia Hoje**: kWh produzidos no dia (valor principal)
+- **Voltagem**: 220V (simulado)
+- **Status**: Se está em uso (produzindo energia)
+
+### 📱 **Sensores Extras:**
+- **Energia Total** - Total acumulado em kWh
+- **Status Detalhado** - Sensor de contato para automações
 
 ## 🚀 Instalação
 
@@ -80,14 +90,27 @@ npm install -g homebridge-growatt-inversor
 
 ## 📊 Exemplo de uso no HomeKit
 
-Digamos que você tenha 2 inversores:
-- **"Casa Principal"** → 4 sensores (Potência, Energia Hoje, Total, Status)  
-- **"Galpão"** → 4 sensores (Potência, Energia Hoje, Total, Status)
+### No app Casa você verá:
 
-Você pode criar automações como:
-- Notificação quando a potência passa de um valor
-- Monitorar produção diária de energia
-- Alertas quando inversor fica offline
+**Tela Principal:**
+- Botão grande **"jfcardososantos"** (nome do seu inversor)
+- Status: 🟢 **Ligado** (se produzindo) ou ⚫ **Desligado** (se offline)
+
+**Ao tocar no botão:**
+- **Potência**: 1500W (potência atual)
+- **Energia**: 25.5 kWh (energia gerada hoje)
+- **Voltagem**: 220V
+- **Em uso**: Sim (se produzindo energia)
+
+**Sensores extras:**
+- **"Energia Total"**: 2847.3 kWh (total acumulado)
+- **"Status Detalhado"**: Para automações
+
+### 🤖 **Automações possíveis:**
+- Notificação quando produção passa de X kWh no dia
+- Alerta quando inversor fica offline por muito tempo  
+- Comparar produção entre diferentes inversores
+- Logs de produção diária/mensal
 
 ## 🐛 Resolução de Problemas
 
