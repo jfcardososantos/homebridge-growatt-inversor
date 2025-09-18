@@ -176,37 +176,54 @@ class GrowattPlatform {
           continue;
         }
 
+        let currentPower = 0;
+        let todayEnergy = 0;
+        let monthEnergy = 0;
+        let yearlyEnergy = 0;
+        let totalEnergy = 0;
+        let isProducing = false;
+
         try {
-          // Obter os dados da planta usando o device_id (que é o device_sn)
-          const plantDataResponse = await axios.get(`https://openapi.growatt.com/v1/plant/list?device_id=${deviceSN}`, {
+          // 1. Obter current_power e plant_id da rota plant/list usando device_id (deviceSN)
+          const plantListResponse = await axios.get(`https://openapi.growatt.com/v1/plant/list?device_id=${deviceSN}`, {
+            headers: { 'token': this.token },
+            timeout: 10000
+          });
+
+          if (plantListResponse.data.error_code !== 0) {
+            this.log.warn(`⚠️ Não foi possível obter dados de produção atual para "${accessory.displayName}". API: ${plantListResponse.data.error_msg || 'Erro desconhecido'}`);
+            this.setAccessoryOffline(accessory);
+            continue;
+          }
+
+          const plantsFromList = plantListResponse.data.data?.plants || [];
+          if (plantsFromList.length === 0) {
+            this.log.warn(`⚠️ Nenhum dado de planta retornado para "${accessory.displayName}" na rota plant/list`);
+            this.setAccessoryOffline(accessory);
+            continue;
+          }
+
+          // Encontrar a planta correspondente ou usar a primeira
+          const plantInfoFromList = plantsFromList.find(p => p.plant_id.toString() === plantId) || plantsFromList[0];
+          currentPower = parseFloat(plantInfoFromList.current_power) || 0;
+          const isProducing = currentPower > 1; // Alterado de 0.1 para 1
+
+          // 2. Usar o plant_id para buscar dados anuais, mensais, totais e diários da rota plant/data
+          const plantDataResponse = await axios.get(`https://openapi.growatt.com/v1/plant/data?plant_id=${plantId}`, {
             headers: { 'token': this.token },
             timeout: 10000
           });
 
           if (plantDataResponse.data.error_code !== 0) {
-            this.log.warn(`⚠️ Não foi possível obter dados para "${accessory.displayName}". API: ${plantDataResponse.data.error_msg || 'Erro desconhecido'}`);
-            this.setAccessoryOffline(accessory);
-            continue;
+            this.log.warn(`⚠️ Não foi possível obter dados históricos para "${accessory.displayName}". API: ${plantDataResponse.data.error_msg || 'Erro desconhecido'}`);
+            // Não colocamos offline aqui, pois current_power já foi obtido
+          } else {
+            const plantData = plantDataResponse.data.data;
+            todayEnergy = parseFloat(plantData.today_energy) || 0;
+            monthEnergy = parseFloat(plantData.month_energy) || 0;
+            yearlyEnergy = parseFloat(plantData.year_energy) || 0;
+            totalEnergy = parseFloat(plantData.total_energy) || 0;
           }
-
-          // Processar os dados da planta
-          const plants = plantDataResponse.data.data?.plants || [];
-          if (plants.length === 0) {
-            this.log.warn(`⚠️ Nenhum dado retornado para "${accessory.displayName}"`);
-            this.setAccessoryOffline(accessory);
-            continue;
-          }
-
-          // Encontrar a planta correspondente
-          const plantInfo = plants.find(p => p.plant_id.toString() === plantId) || plants[0];
-          
-          // Extrair os dados necessários
-          const currentPower = parseFloat(plantInfo.current_power) || 0;
-          const todayEnergy = parseFloat(plantInfo.today_energy) || 0;
-          const monthEnergy = parseFloat(plantInfo.month_energy) || 0;
-          const yearlyEnergy = parseFloat(plantInfo.year_energy) || 0;
-          const totalEnergy = parseFloat(plantInfo.total_energy) || 0;
-          const isProducing = currentPower > 0.1;
 
           // Atualizar o acessório
           accessory.context.isProducing = isProducing;
