@@ -73,62 +73,163 @@ class GrowattPlatform {
 
       this.log.info(`📡 API da Growatt retornou ${plants.length} inversor(es).`);
 
-      const plantData = plants.map(plant => ({
-        plantId: plant.plant_id,
-        plantName: plant.name || `Inversor ${plant.plant_id}`,
-        city: plant.city || 'Não informado',
-        peakPower: plant.peak_power || 0,
-      }));
+      // Manter um registro de todos os acessórios ativos
+      const activeAccessories = new Set();
 
-      const activePlantIds = new Set(plantData.map(p => p.plantId.toString()));
+      // Para cada planta, buscar seus dispositivos
+      for (const plant of plants) {
+        const plantId = plant.plant_id.toString();
+        const plantName = plant.name || `Inversor ${plant.plant_id}`;
+        
+        try {
+          // Buscar dispositivos desta planta
+          const deviceListResponse = await axios.get(`https://openapi.growatt.com/v1/device/list?plant_id=${plantId}`, {
+            headers: { 'token': this.token },
+            timeout: 10000
+          });
 
-      // Remover acessórios que não estão mais na conta Growatt
-      for (const [plantId, accessory] of this.accessories.entries()) {
-        if (!activePlantIds.has(plantId)) {
-          this.log.info(`🗑️ Removendo inversor obsoleto: "${accessory.displayName}" (Plant ID: ${plantId})`);
-          this.api.unregisterPlatformAccessories('homebridge-growatt-inversor', 'GrowattInversor', [accessory]);
-          this.accessories.delete(plantId);
+          if (deviceListResponse.data.error_code !== 0 || !deviceListResponse.data.data?.devices?.length) {
+            this.log.warn(`⚠️ Nenhum dispositivo encontrado para planta "${plantName}"`);
+            continue;
+          }
+
+          // Iterar sobre cada dispositivo da planta
+          for (const device of deviceListResponse.data.data.devices) {
+            const deviceSN = device.device_sn;
+            if (!deviceSN) {
+              this.log.warn(`⚠️ Dispositivo sem SN na planta "${plantName}"`);
+              continue;
+            }
+
+            // Criar um ID único para este dispositivo
+            const deviceId = `${plantId}-${deviceSN}`;
+            activeAccessories.add(deviceId);
+
+            // Nome do dispositivo
+            const deviceName = `${plantName} - ${device.device_sn}`;
+            const uuid = generateUUID(`growatt-inversor-${deviceId}`);
+            
+            let accessory = this.accessories.get(deviceId);
+
+            if (accessory) {
+              this.log.info(`✅ Verificando dispositivo existente: "${deviceName}"`);
+              accessory.displayName = deviceName;
+              accessory.context.plantName = plantName;
+              accessory.context.plantId = plantId;
+              accessory.context.deviceSN = deviceSN;
+              accessory.context.deviceType = device.type;
+              accessory.context.manufacturer = device.manufacturer;
+            } else {
+              this.log.info(`➕ Adicionando novo dispositivo: "${deviceName}"`);
+              accessory = new PlatformAccessory(deviceName, uuid);
+              accessory.context.plantId = plantId;
+              accessory.context.plantName = plantName;
+              accessory.context.deviceSN = deviceSN;
+              accessory.context.deviceType = device.type;
+              accessory.context.manufacturer = device.manufacturer;
+              
+              this.accessories.set(deviceId, accessory);
+              this.api.registerPlatformAccessories('homebridge-growatt-inversor', 'GrowattInversor', [accessory]);
+            }
+
+            this.setupAccessoryServices(accessory);
+            this.log.info(`🔧 "${deviceName}" configurado com sucesso.`);
+          }
+        } catch (error) {
+          this.log.error(`❌ Erro ao buscar dispositivos para planta "${plantName}": ${error.message}`);
         }
       }
 
-      // Adicionar/Atualizar acessórios
-      for (const plant of plantData) {
-        const plantId = plant.plantId.toString();
-        const plantName = plant.plantName;
-        const uuid = generateUUID(`growatt-inversor-${plantId}`);
-        
-        let accessory = this.accessories.get(plantId);
-
-        if (accessory) {
-          this.log.info(`✅ Verificando inversor existente: "${plantName}"`);
-          accessory.displayName = plantName;
-          accessory.context.plantName = plantName;
-          accessory.context.city = plant.city;
-          accessory.context.peakPower = plant.peakPower;
-        } else {
-          this.log.info(`➕ Adicionando novo inversor: "${plantName}" (Plant ID: ${plantId})`);
-          accessory = new PlatformAccessory(plantName, uuid);
-          accessory.context.plantId = plantId;
-          accessory.context.plantName = plantName;
-          accessory.context.city = plant.city;
-          accessory.context.peakPower = plant.peakPower;
-          
-          this.accessories.set(plantId, accessory);
-          this.api.registerPlatformAccessories('homebridge-growatt-inversor', 'GrowattInversor', [accessory]);
+      // Remover acessórios que não estão mais ativos
+      for (const [deviceId, accessory] of this.accessories.entries()) {
+        if (!activeAccessories.has(deviceId)) {
+          this.log.info(`🗑️ Removendo dispositivo obsoleto: "${accessory.displayName}" (ID: ${deviceId})`);
+          this.api.unregisterPlatformAccessories('homebridge-growatt-inversor', 'GrowattInversor', [accessory]);
+          this.accessories.delete(deviceId);
         }
-
-        this.setupAccessoryServices(accessory);
-        this.log.info(`🔧 "${plantName}" configurado com sucesso.`);
       }
 
       this.log.info('✅ Descoberta e sincronização finalizadas.');
-      this.startPeriodicMonitoring(plantData);
+      this.startPeriodicMonitoring();
 
     } catch (error) {
       this.log.error(`❌ ERRO CRÍTICO na descoberta inicial: ${error.message}`);
       this.log.warn('⏳ Tentando novamente em 5 minutos...');
       setTimeout(() => this.initialDiscovery(), 5 * 60 * 1000);
     }
+  }
+
+  startPeriodicMonitoring() {
+    this.log.info(`⏰ Iniciando monitoramento periódico para ${this.accessories.size} dispositivo(s)...`);
+
+    const updateAllData = async () => {
+      this.log.info('🔄 Atualizando dados de todos os dispositivos...');
+
+      // Atualizar cada acessório com os dados
+      for (const [deviceId, accessory] of this.accessories.entries()) {
+        const plantId = accessory.context.plantId;
+        const deviceSN = accessory.context.deviceSN;
+        
+        if (!deviceSN) {
+          this.log.warn(`⚠️ Dispositivo "${accessory.displayName}" sem SN configurado`);
+          this.setAccessoryOffline(accessory);
+          continue;
+        }
+
+        try {
+          // Obter os dados da planta usando o device_id (que é o device_sn)
+          const plantDataResponse = await axios.get(`https://openapi.growatt.com/v1/plant/list?device_id=${deviceSN}`, {
+            headers: { 'token': this.token },
+            timeout: 10000
+          });
+
+          if (plantDataResponse.data.error_code !== 0) {
+            this.log.warn(`⚠️ Não foi possível obter dados para "${accessory.displayName}". API: ${plantDataResponse.data.error_msg || 'Erro desconhecido'}`);
+            this.setAccessoryOffline(accessory);
+            continue;
+          }
+
+          // Processar os dados da planta
+          const plants = plantDataResponse.data.data?.plants || [];
+          if (plants.length === 0) {
+            this.log.warn(`⚠️ Nenhum dado retornado para "${accessory.displayName}"`);
+            this.setAccessoryOffline(accessory);
+            continue;
+          }
+
+          // Encontrar a planta correspondente
+          const plantInfo = plants.find(p => p.plant_id.toString() === plantId) || plants[0];
+          
+          // Extrair os dados necessários
+          const currentPower = parseFloat(plantInfo.current_power) || 0;
+          const todayEnergy = parseFloat(plantInfo.today_energy) || 0;
+          const monthEnergy = parseFloat(plantInfo.month_energy) || 0;
+          const yearlyEnergy = parseFloat(plantInfo.year_energy) || 0;
+          const totalEnergy = parseFloat(plantInfo.total_energy) || 0;
+          const isProducing = currentPower > 0.1;
+
+          // Atualizar o acessório
+          accessory.context.isProducing = isProducing;
+
+          accessory.getServiceById(Service.LightSensor, 'today_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, todayEnergy);
+          accessory.getServiceById(Service.LightSensor, 'current_power')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, currentPower);
+          accessory.getServiceById(Service.LightSensor, 'monthly_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, monthEnergy);
+          accessory.getServiceById(Service.LightSensor, 'yearly_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, yearlyEnergy);
+          accessory.getServiceById(Service.LightSensor, 'total_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, totalEnergy);
+          accessory.getServiceById(Service.Switch, 'producing_status')?.updateCharacteristic(Characteristic.On, isProducing);
+
+          const status = isProducing ? '🟢 PRODUZINDO' : '🔴 OFFLINE';
+          this.log.info(`⚡ ${accessory.displayName}: ${currentPower.toFixed(1)}W | Hoje: ${todayEnergy.toFixed(2)}kWh | Mês: ${monthEnergy.toFixed(2)}kWh | Ano: ${yearlyEnergy.toFixed(2)}kWh | ${status}`);
+        } catch (error) {
+          this.log.error(`❌ Erro ao contatar API para "${accessory.displayName}": ${error.message}`);
+          this.setAccessoryOffline(accessory);
+        }
+      }
+    };
+
+    updateAllData();
+    setInterval(updateAllData, this.refreshInterval);
+    this.log.info(`✅ Monitoramento iniciado. Atualizações a cada ${this.refreshInterval / 60000} minutos.`);
   }
 
   setupAccessoryServices(accessory) {
@@ -163,87 +264,6 @@ class GrowattPlatform {
     switchService.getCharacteristic(Characteristic.On).onGet(() => accessory.context.isProducing || false);
 
     this.log.info(`✅ Serviços para "${name}" nomeados e configurados.`);
-  }
-
-  startPeriodicMonitoring(plantData) {
-    this.log.info(`⏰ Iniciando monitoramento periódico para ${plantData.length} inversor(es)...`);
-
-    const updateAllData = async () => {
-      this.log.info('🔄 Atualizando dados de todos os inversores...');
-
-      try {
-        // Buscar dados da API plant/list para obter current_power
-        const listResponse = await axios.get('https://openapi.growatt.com/v1/plant/list', {
-          headers: { 'token': this.token },
-          timeout: 10000
-        });
-
-        if (listResponse.data.error_code !== 0) {
-          throw new Error(`Erro da API Growatt: ${listResponse.data.error_msg || 'Erro desconhecido'}`);
-        }
-
-        const plants = listResponse.data.data?.plants || [];
-        
-        // Criar um mapa de plantId para current_power
-        const powerMap = new Map();
-        for (const plant of plants) {
-          powerMap.set(plant.plant_id.toString(), parseFloat(plant.current_power) || 0);
-        }
-
-        // Atualizar cada acessório com os dados
-        for (const plant of plantData) {
-          const plantId = plant.plantId.toString();
-          const accessory = this.accessories.get(plantId);
-          if (!accessory) continue;
-
-          try {
-            const response = await axios.get(`https://openapi.growatt.com/v1/plant/data?plant_id=${plantId}`, {
-              headers: { 'token': this.token },
-              timeout: 10000
-            });
-
-            if (response.data.error_code === 0 && response.data.data) {
-              const data = response.data.data;
-              // Usar current_power da API plant/list
-              const currentPower = powerMap.get(plantId) || 0;
-              const todayEnergy = parseFloat(data.today_energy) || 0;
-              const monthEnergy = parseFloat(data.monthly_energy) || 0;
-              const yearlyEnergy = parseFloat(data.yearly_energy) || 0;
-              const totalEnergy = parseFloat(data.total_energy) || 0;
-              const isProducing = currentPower > 0.1;
-
-              accessory.context.isProducing = isProducing;
-
-              accessory.getServiceById(Service.LightSensor, 'today_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, todayEnergy);
-              accessory.getServiceById(Service.LightSensor, 'current_power')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, currentPower);
-              accessory.getServiceById(Service.LightSensor, 'monthly_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, monthEnergy);
-              accessory.getServiceById(Service.LightSensor, 'yearly_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, yearlyEnergy);
-              accessory.getServiceById(Service.LightSensor, 'total_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, totalEnergy);
-              accessory.getServiceById(Service.Switch, 'producing_status')?.updateCharacteristic(Characteristic.On, isProducing);
-
-              const status = isProducing ? '🟢 PRODUZINDO' : '🔴 OFFLINE';
-              this.log.info(`⚡ ${accessory.displayName}: ${currentPower.toFixed(1)}W | Hoje: ${todayEnergy.toFixed(2)}kWh | Mês: ${monthEnergy.toFixed(2)}kWh | Ano: ${yearlyEnergy.toFixed(2)}kWh | ${status}`);
-            } else {
-              this.log.warn(`⚠️ Não foi possível obter dados para "${accessory.displayName}". API: ${response.data.error_msg || 'Erro desconhecido'}`);
-              this.setAccessoryOffline(accessory);
-            }
-          } catch (error) {
-            this.log.error(`❌ Erro ao contatar API para "${accessory.displayName}": ${error.message}`);
-            this.setAccessoryOffline(accessory);
-          }
-        }
-      } catch (error) {
-        this.log.error(`❌ Erro ao obter lista de plantas: ${error.message}`);
-        // Colocar todos os acessórios offline em caso de falha geral
-        for (const accessory of this.accessories.values()) {
-          this.setAccessoryOffline(accessory);
-        }
-      }
-    };
-
-    updateAllData();
-    setInterval(updateAllData, this.refreshInterval);
-    this.log.info(`✅ Monitoramento iniciado. Atualizações a cada ${this.refreshInterval / 60000} minutos.`);
   }
 
   setAccessoryOffline(accessory) {
