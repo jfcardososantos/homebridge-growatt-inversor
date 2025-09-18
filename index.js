@@ -215,15 +215,22 @@ class GrowattPlatform {
               timeout: 10000
             });
 
-            if (plantDataResponse.data.error_code !== 0) {
-              this.log.warn(`⚠️ Não foi possível obter dados históricos para "${accessory.displayName}" (plant_id: ${plantId}). API retornou erro: ${plantDataResponse.data.error_msg || 'Erro desconhecido'}. Dados históricos serão exibidos como zero.`);
-              // Os valores permanecem 0 como inicializados
+            // A resposta da API plant/data vem em um array, precisamos acessar o primeiro elemento
+            const apiResponse = plantDataResponse.data;
+            if (!Array.isArray(apiResponse) || apiResponse.length === 0) {
+              this.log.warn(`⚠️ Resposta inesperada da API plant/data para "${accessory.displayName}" (plant_id: ${plantId}). Dados históricos serão exibidos como zero.`);
             } else {
-              const plantData = plantDataResponse.data.data;
-              todayEnergy = parseFloat(plantData.today_energy) || 0;
-              monthEnergy = parseFloat(plantData.month_energy) || 0;
-              yearlyEnergy = parseFloat(plantData.year_energy) || 0;
-              totalEnergy = parseFloat(plantData.total_energy) || 0;
+              const plantDataEntry = apiResponse[0]; // Pega o primeiro objeto do array
+
+              if (plantDataEntry.error_code !== 0) {
+                this.log.warn(`⚠️ Não foi possível obter dados históricos para "${accessory.displayName}" (plant_id: ${plantId}). API retornou erro: ${plantDataEntry.error_msg || 'Erro desconhecido'}. Dados históricos serão exibidos como zero.`);
+              } else {
+                const plantData = plantDataEntry.data;
+                todayEnergy = parseFloat(plantData.today_energy) || 0;
+                monthEnergy = parseFloat(plantData.monthly_energy) || 0;
+                yearlyEnergy = parseFloat(plantData.yearly_energy) || 0;
+                totalEnergy = parseFloat(plantData.total_energy) || 0;
+              }
             }
           } catch (error) {
             this.log.error(`❌ Erro na requisição da API plant/data para "${accessory.displayName}" (plant_id: ${plantId}): ${error.message}. Dados históricos serão exibidos como zero.`);
