@@ -106,10 +106,10 @@ class GrowattPlatform {
             activeAccessories.add(deviceId);
 
             // Nome do dispositivo
-            const deviceName = `${plantName} - ${device.device_sn}`;
-            const uuid = generateUUID(`growatt-inversor-${deviceId}`);
+            const deviceName = `${plantName}`;
+            const uuid = generateUUID(`growatt-inversor-${plantId}`);
             
-            let accessory = this.accessories.get(deviceId);
+            let accessory = this.accessories.get(plantId);
 
             if (accessory) {
               this.log.info(`✅ Verificando dispositivo existente: "${deviceName}"`);
@@ -128,7 +128,7 @@ class GrowattPlatform {
               accessory.context.deviceType = device.type;
               accessory.context.manufacturer = device.manufacturer;
               
-              this.accessories.set(deviceId, accessory);
+              this.accessories.set(plantId, accessory);
               this.api.registerPlatformAccessories('homebridge-growatt-inversor', 'GrowattInversor', [accessory]);
             }
 
@@ -142,7 +142,7 @@ class GrowattPlatform {
 
       // Remover acessórios que não estão mais ativos
       for (const [deviceId, accessory] of this.accessories.entries()) {
-        if (!activeAccessories.has(deviceId)) {
+        if (!activeAccessories.has(accessory.context.plantId)) {
           this.log.info(`🗑️ Removendo dispositivo obsoleto: "${accessory.displayName}" (ID: ${deviceId})`);
           this.api.unregisterPlatformAccessories('homebridge-growatt-inversor', 'GrowattInversor', [accessory]);
           this.accessories.delete(deviceId);
@@ -166,8 +166,7 @@ class GrowattPlatform {
       this.log.info('🔄 Atualizando dados de todos os dispositivos...');
 
       // Atualizar cada acessório com os dados
-      for (const [deviceId, accessory] of this.accessories.entries()) {
-        const plantId = accessory.context.plantId;
+      for (const [plantId, accessory] of this.accessories.entries()) {
         const deviceSN = accessory.context.deviceSN;
         
         if (!deviceSN) {
@@ -185,10 +184,13 @@ class GrowattPlatform {
 
         try {
           // 1. Obter current_power e plant_id da rota plant/list usando device_id (deviceSN)
-          const plantListResponse = await axios.get(`https://openapi.growatt.com/v1/plant/list?device_id=${deviceSN}`, {
+          const plantListUrl = `https://openapi.growatt.com/v1/plant/list?device_id=${deviceSN}`;
+          this.log.debug(`DEBUG: Chamando API plant/list para ${accessory.displayName}. URL: ${plantListUrl}`);
+          const plantListResponse = await axios.get(plantListUrl, {
             headers: { 'token': this.token },
             timeout: 10000
           });
+          this.log.debug(`DEBUG: Resposta da API plant/list para ${accessory.displayName}: ${JSON.stringify(plantListResponse.data)}`);
 
           if (plantListResponse.data.error_code !== 0) {
             this.log.warn(`⚠️ Não foi possível obter dados de produção atual para "${accessory.displayName}". API: ${plantListResponse.data.error_msg || 'Erro desconhecido'}`);
@@ -206,14 +208,18 @@ class GrowattPlatform {
           // Encontrar a planta correspondente ou usar a primeira
           const plantInfoFromList = plantsFromList.find(p => p.plant_id.toString() === plantId) || plantsFromList[0];
           currentPower = parseFloat(plantInfoFromList.current_power) || 0;
-          const isProducing = currentPower > 1; // Alterado de 0.1 para 1
+          isProducing = currentPower > 1;
 
           // 2. Usar o plant_id para buscar dados anuais, mensais, totais e diários da rota plant/data
           try {
-            const plantDataResponse = await axios.get(`https://openapi.growatt.com/v1/plant/data?plant_id=${plantId}`, {
+            const plantDataUrl = `https://openapi.growatt.com/v1/plant/data?plant_id=${plantId}`;
+            this.log.debug(`DEBUG: Chamando API plant/data para ${accessory.displayName} com plant_id: ${plantId}. URL: ${plantDataUrl}`);
+            const plantDataResponse = await axios.get(plantDataUrl, {
               headers: { 'token': this.token },
               timeout: 10000
             });
+            this.log.debug(`DEBUG: Resposta da API plant/data para ${accessory.displayName}: ${JSON.stringify(plantDataResponse.data)}`);
+
 
             // A resposta da API plant/data vem em um array, precisamos acessar o primeiro elemento
             const apiResponse = plantDataResponse.data;
@@ -307,9 +313,9 @@ class GrowattPlatform {
   setAccessoryOffline(accessory) {
     this.log.warn(`🔌 Colocando "${accessory.displayName}" em modo offline.`);
     accessory.context.isProducing = false;
-    accessory.getServiceById(Service.LightSensor, 'today_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, 0);
-    accessory.getServiceById(Service.LightSensor, 'current_power')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, 0);
-    accessory.getServiceById(Service.LightSensor, 'monthly_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, 0);
+    accessory.getServiceById(Service.LightSensor, 'today_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, 0.0001);
+    accessory.getServiceById(Service.LightSensor, 'current_power')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, 0.0001);
+    accessory.getServiceById(Service.LightSensor, 'monthly_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, 0.0001);
     // Não zeramos o anual e total, pois são acumulados históricos
     accessory.getServiceById(Service.Switch, 'producing_status')?.updateCharacteristic(Characteristic.On, false);
   }
