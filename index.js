@@ -171,43 +171,71 @@ class GrowattPlatform {
     const updateAllData = async () => {
       this.log.info('🔄 Atualizando dados de todos os inversores...');
 
-      for (const plant of plantData) {
-        const plantId = plant.plantId.toString();
-        const accessory = this.accessories.get(plantId);
-        if (!accessory) continue;
+      try {
+        // Buscar dados da API plant/list para obter current_power
+        const listResponse = await axios.get('https://openapi.growatt.com/v1/plant/list', {
+          headers: { 'token': this.token },
+          timeout: 10000
+        });
 
-        try {
-          const response = await axios.get(`https://openapi.growatt.com/v1/plant/data?plant_id=${plantId}`, {
-            headers: { 'token': this.token },
-            timeout: 10000
-          });
+        if (listResponse.data.error_code !== 0) {
+          throw new Error(`Erro da API Growatt: ${listResponse.data.error_msg || 'Erro desconhecido'}`);
+        }
 
-          if (response.data.error_code === 0 && response.data.data) {
-            const data = response.data.data;
-            const currentPower = parseFloat(data.current_power) || 0;
-            const todayEnergy = parseFloat(data.today_energy) || 0;
-            const monthEnergy = parseFloat(data.monthly_energy) || 0;
-            const yearlyEnergy = parseFloat(data.yearly_energy) || 0;
-            const totalEnergy = parseFloat(data.total_energy) || 0;
-            const isProducing = currentPower > 0.1;
+        const plants = listResponse.data.data?.plants || [];
+        
+        // Criar um mapa de plantId para current_power
+        const powerMap = new Map();
+        for (const plant of plants) {
+          powerMap.set(plant.plant_id.toString(), parseFloat(plant.current_power) || 0);
+        }
 
-            accessory.context.isProducing = isProducing;
+        // Atualizar cada acessório com os dados
+        for (const plant of plantData) {
+          const plantId = plant.plantId.toString();
+          const accessory = this.accessories.get(plantId);
+          if (!accessory) continue;
 
-            accessory.getServiceById(Service.LightSensor, 'today_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, todayEnergy);
-            accessory.getServiceById(Service.LightSensor, 'current_power')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, currentPower);
-            accessory.getServiceById(Service.LightSensor, 'monthly_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, monthEnergy);
-            accessory.getServiceById(Service.LightSensor, 'yearly_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, yearlyEnergy);
-            accessory.getServiceById(Service.LightSensor, 'total_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, totalEnergy);
-            accessory.getServiceById(Service.Switch, 'producing_status')?.updateCharacteristic(Characteristic.On, isProducing);
+          try {
+            const response = await axios.get(`https://openapi.growatt.com/v1/plant/data?plant_id=${plantId}`, {
+              headers: { 'token': this.token },
+              timeout: 10000
+            });
 
-            const status = isProducing ? '🟢 PRODUZINDO' : '🔴 OFFLINE';
-            this.log.info(`⚡ ${accessory.displayName}: ${currentPower.toFixed(1)}W | Hoje: ${todayEnergy.toFixed(2)}kWh | Mês: ${monthEnergy.toFixed(2)}kWh | Ano: ${yearlyEnergy.toFixed(2)}kWh | ${status}`);
-          } else {
-            this.log.warn(`⚠️ Não foi possível obter dados para "${accessory.displayName}". API: ${response.data.error_msg || 'Erro desconhecido'}`);
+            if (response.data.error_code === 0 && response.data.data) {
+              const data = response.data.data;
+              // Usar current_power da API plant/list
+              const currentPower = powerMap.get(plantId) || 0;
+              const todayEnergy = parseFloat(data.today_energy) || 0;
+              const monthEnergy = parseFloat(data.monthly_energy) || 0;
+              const yearlyEnergy = parseFloat(data.yearly_energy) || 0;
+              const totalEnergy = parseFloat(data.total_energy) || 0;
+              const isProducing = currentPower > 0.1;
+
+              accessory.context.isProducing = isProducing;
+
+              accessory.getServiceById(Service.LightSensor, 'today_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, todayEnergy);
+              accessory.getServiceById(Service.LightSensor, 'current_power')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, currentPower);
+              accessory.getServiceById(Service.LightSensor, 'monthly_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, monthEnergy);
+              accessory.getServiceById(Service.LightSensor, 'yearly_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, yearlyEnergy);
+              accessory.getServiceById(Service.LightSensor, 'total_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, totalEnergy);
+              accessory.getServiceById(Service.Switch, 'producing_status')?.updateCharacteristic(Characteristic.On, isProducing);
+
+              const status = isProducing ? '🟢 PRODUZINDO' : '🔴 OFFLINE';
+              this.log.info(`⚡ ${accessory.displayName}: ${currentPower.toFixed(1)}W | Hoje: ${todayEnergy.toFixed(2)}kWh | Mês: ${monthEnergy.toFixed(2)}kWh | Ano: ${yearlyEnergy.toFixed(2)}kWh | ${status}`);
+            } else {
+              this.log.warn(`⚠️ Não foi possível obter dados para "${accessory.displayName}". API: ${response.data.error_msg || 'Erro desconhecido'}`);
+              this.setAccessoryOffline(accessory);
+            }
+          } catch (error) {
+            this.log.error(`❌ Erro ao contatar API para "${accessory.displayName}": ${error.message}`);
             this.setAccessoryOffline(accessory);
           }
-        } catch (error) {
-          this.log.error(`❌ Erro ao contatar API para "${accessory.displayName}": ${error.message}`);
+        }
+      } catch (error) {
+        this.log.error(`❌ Erro ao obter lista de plantas: ${error.message}`);
+        // Colocar todos os acessórios offline em caso de falha geral
+        for (const accessory of this.accessories.values()) {
           this.setAccessoryOffline(accessory);
         }
       }
