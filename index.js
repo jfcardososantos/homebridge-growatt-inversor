@@ -209,30 +209,44 @@ class GrowattPlatform {
           const isProducing = currentPower > 1; // Alterado de 0.1 para 1
 
           // 2. Usar o plant_id para buscar dados anuais, mensais, totais e diários da rota plant/data
-          const plantDataResponse = await axios.get(`https://openapi.growatt.com/v1/plant/data?plant_id=${plantId}`, {
-            headers: { 'token': this.token },
-            timeout: 10000
-          });
+          try {
+            const plantDataResponse = await axios.get(`https://openapi.growatt.com/v1/plant/data?plant_id=${plantId}`, {
+              headers: { 'token': this.token },
+              timeout: 10000
+            });
 
-          if (plantDataResponse.data.error_code !== 0) {
-            this.log.warn(`⚠️ Não foi possível obter dados históricos para "${accessory.displayName}". API: ${plantDataResponse.data.error_msg || 'Erro desconhecido'}`);
-            // Não colocamos offline aqui, pois current_power já foi obtido
-          } else {
-            const plantData = plantDataResponse.data.data;
-            todayEnergy = parseFloat(plantData.today_energy) || 0;
-            monthEnergy = parseFloat(plantData.month_energy) || 0;
-            yearlyEnergy = parseFloat(plantData.year_energy) || 0;
-            totalEnergy = parseFloat(plantData.total_energy) || 0;
+            if (plantDataResponse.data.error_code !== 0) {
+              this.log.warn(`⚠️ Não foi possível obter dados históricos para "${accessory.displayName}" (plant_id: ${plantId}). API retornou erro: ${plantDataResponse.data.error_msg || 'Erro desconhecido'}. Dados históricos serão exibidos como zero.`);
+              // Os valores permanecem 0 como inicializados
+            } else {
+              const plantData = plantDataResponse.data.data;
+              todayEnergy = parseFloat(plantData.today_energy) || 0;
+              monthEnergy = parseFloat(plantData.month_energy) || 0;
+              yearlyEnergy = parseFloat(plantData.year_energy) || 0;
+              totalEnergy = parseFloat(plantData.total_energy) || 0;
+            }
+          } catch (error) {
+            this.log.error(`❌ Erro na requisição da API plant/data para "${accessory.displayName}" (plant_id: ${plantId}): ${error.message}. Dados históricos serão exibidos como zero.`);
+            // Os valores permanecem 0 como inicializados
           }
 
           // Atualizar o acessório
           accessory.context.isProducing = isProducing;
 
-          accessory.getServiceById(Service.LightSensor, 'today_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, todayEnergy);
-          accessory.getServiceById(Service.LightSensor, 'current_power')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, currentPower);
-          accessory.getServiceById(Service.LightSensor, 'monthly_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, monthEnergy);
-          accessory.getServiceById(Service.LightSensor, 'yearly_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, yearlyEnergy);
-          accessory.getServiceById(Service.LightSensor, 'total_energy')?.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, totalEnergy);
+          // Helper function to handle 0 values for LightSensor characteristics
+          const updateLightSensorCharacteristic = (service, characteristicName, value) => {
+            // Homebridge LightSensor (CurrentAmbientLightLevel) has a minimum of 0.0001.
+            // If the actual value is 0, we set it to 0.0001 to avoid warnings.
+            const safeValue = value > 0 ? value : 0.0001; 
+            service?.updateCharacteristic(characteristicName, safeValue);
+          };
+
+          updateLightSensorCharacteristic(accessory.getServiceById(Service.LightSensor, 'today_energy'), Characteristic.CurrentAmbientLightLevel, todayEnergy);
+          updateLightSensorCharacteristic(accessory.getServiceById(Service.LightSensor, 'current_power'), Characteristic.CurrentAmbientLightLevel, currentPower);
+          updateLightSensorCharacteristic(accessory.getServiceById(Service.LightSensor, 'monthly_energy'), Characteristic.CurrentAmbientLightLevel, monthEnergy);
+          updateLightSensorCharacteristic(accessory.getServiceById(Service.LightSensor, 'yearly_energy'), Characteristic.CurrentAmbientLightLevel, yearlyEnergy);
+          updateLightSensorCharacteristic(accessory.getServiceById(Service.LightSensor, 'total_energy'), Characteristic.CurrentAmbientLightLevel, totalEnergy);
+          
           accessory.getServiceById(Service.Switch, 'producing_status')?.updateCharacteristic(Characteristic.On, isProducing);
 
           const status = isProducing ? '🟢 PRODUZINDO' : '🔴 OFFLINE';
